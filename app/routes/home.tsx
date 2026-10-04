@@ -190,7 +190,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 				<circle r={3 / view.k} fill="white" fillOpacity={0.2} />
 			</svg>
 			<div
-				className="pointer-events-none fixed inset-0 font-mono"
+				className="pointer-events-none fixed inset-0"
 				// --k scales positions and drift (see vmin), not the markers themselves.
 				style={
 					{
@@ -211,7 +211,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 				))}
 			</div>
 			{/* Zoomed in: a dot on the screen edge toward each plane off screen. */}
-			<svg className="pointer-events-none fixed inset-0 h-full w-full font-mono">
+			<svg className="pointer-events-none fixed inset-0 h-full w-full">
 				{visible.map((a) => {
 					const p = edge(a, settings, vm);
 					if (!p) return null;
@@ -227,6 +227,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 							key={a.hex}
 							transform={`translate(${p[0]} ${p[1]})`}
 							fill={tint(a)}
+							opacity={eta == null ? 0.8 : undefined} // not inbound
 						>
 							<circle r={vm * 0.4} />
 							<line
@@ -277,62 +278,67 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 				onPointerCancel={(e) => pointers.current.delete(e.pointerId)}
 			/>
 
-			<form
-				className="fixed top-2 left-2 flex flex-wrap items-end gap-2 text-xs"
-				onSubmit={(e) => {
-					e.preventDefault();
-					const next = {
-						...settings,
-						...Object.fromEntries(
-							[...new FormData(e.currentTarget)].map(([k, v]) => [
-								k,
-								Number(v),
-							]),
-						),
-					};
-					// A new point or radius starts from the fit-to-radius view.
-					setSettings(
-						next.lat === lat && next.lon === lon && next.radius === radius
-							? next
-							: { ...next, view: HOME },
-					);
-				}}
-			>
-				{FIELDS.map(([name, label, min, max]) => (
-					<label key={name} className="flex flex-col gap-1">
-						{label}
+			<details className="fixed top-2 left-2 text-xs opacity-50 open:opacity-100">
+				<summary className="cursor-pointer list-none text-sm [&::-webkit-details-marker]:hidden">
+					CONF
+				</summary>
+				<form
+					className="mt-2 flex flex-wrap items-end gap-2"
+					onSubmit={(e) => {
+						e.preventDefault();
+						const next = {
+							...settings,
+							...Object.fromEntries(
+								[...new FormData(e.currentTarget)].map(([k, v]) => [
+									k,
+									Number(v),
+								]),
+							),
+						};
+						// A new point or radius starts from the fit-to-radius view.
+						setSettings(
+							next.lat === lat && next.lon === lon && next.radius === radius
+								? next
+								: { ...next, view: HOME },
+						);
+					}}
+				>
+					{FIELDS.map(([name, label, min, max]) => (
+						<label key={name} className="flex flex-col gap-1">
+							{label}
+							<input
+								name={name}
+								type="number"
+								step="any"
+								min={min}
+								max={max}
+								required
+								defaultValue={settings[name]}
+								className="w-28 border border-white bg-black px-1 py-0.5 text-sm"
+							/>
+						</label>
+					))}
+					<button className="border border-white px-2 py-0.5 text-sm">
+						Apply
+					</button>
+					{/* Unnamed, so FormData skips it; applies instantly without a refetch. */}
+					<label className="flex items-center gap-1 text-sm">
 						<input
-							name={name}
-							type="number"
-							step="any"
-							min={min}
-							max={max}
-							required
-							defaultValue={settings[name]}
-							className="w-28 border border-white bg-black px-1 py-0.5 text-sm"
+							type="checkbox"
+							checked={settings.onlyAirborne}
+							onChange={(e) =>
+								setSettings({ ...settings, onlyAirborne: e.target.checked })
+							}
 						/>
+						Only airborne
 					</label>
-				))}
-				<button className="border border-white px-2 py-0.5 text-sm">
-					Apply
-				</button>
-				{/* Unnamed, so FormData skips it; applies instantly without a refetch. */}
-				<label className="flex items-center gap-1 text-sm">
-					<input
-						type="checkbox"
-						checked={settings.onlyAirborne}
-						onChange={(e) =>
-							setSettings({ ...settings, onlyAirborne: e.target.checked })
-						}
-					/>
-					Only airborne
-				</label>
-				<span className="w-full">
-					{visible.length}/{poll.aircraft.length} aircraft · elev{" "}
-					{elevation == null ? "-" : `${Math.round(elevation)}ft`}
-					{error && <span className="ml-2 text-red-400">{error}</span>}
-				</span>
-			</form>
+				</form>
+			</details>
+			<span className="fixed bottom-2 left-2 text-xs">
+				{visible.length}/{poll.aircraft.length} aircraft · elev{" "}
+				{elevation == null ? "-" : `${Math.round(elevation)}ft`}
+				{error && <span className="ml-2 text-red-400">{error}</span>}
+			</span>
 		</main>
 	);
 }
@@ -453,6 +459,7 @@ function Plane({
 					className="absolute -top-[5vmin] -left-[5vmin] size-[10vmin] overflow-visible"
 					fill={tint(a)}
 					stroke={tint(a)}
+					opacity={eta == null ? 0.8 : undefined} // not inbound
 				>
 					<circle r={5} fill="none" />
 					{a.track != null && (

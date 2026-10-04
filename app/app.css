@@ -1,9 +1,6 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif,
-    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-
   --animate-pulse-out: pulse-out 1.5s ease-in-out forwards;
   /* Separate properties (translate vs transform), so both run on one layer. 60s = DRIFT_S in home.tsx */
   --animate-move: drift 60s linear forwards, settle 1s ease-in-out;
@@ -43,6 +40,11 @@
 
 html,
 body {
-  @apply bg-black text-white;
+  @apply bg-black font-mono text-white;
   color-scheme: dark;
+}
+
+/* Leaflet sets its own font on the map (attribution); body prefix outranks leaflet.css, which loads later. */
+body .leaflet-container {
+  font-family: inherit;
 }
