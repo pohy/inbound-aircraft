@@ -2,6 +2,7 @@ import { type CSSProperties, useEffect, useState } from "react";
 import { useFetcher } from "react-router";
 import type { Route } from "./+types/home";
 import { BaseMap } from "../map.client";
+import { overheadIn } from "../overhead";
 import type { Aircraft, loader as aircraftLoader } from "./api.aircraft";
 
 type Settings = {
@@ -9,6 +10,7 @@ type Settings = {
 	lon: number;
 	radius: number;
 	poll: number;
+	overhead: number; // NM a track must pass within to count as overflying
 	airborne: boolean;
 	grounded: boolean;
 };
@@ -18,6 +20,7 @@ const DEFAULTS: Settings = {
 	lon: -0.4543,
 	radius: 25,
 	poll: 10,
+	overhead: 1,
 	airborne: true,
 	grounded: true,
 };
@@ -27,6 +30,7 @@ const FIELDS = [
 	["lon", "Lon", -180, 180],
 	["radius", "Radius (NM)", 1, 250],
 	["poll", "Poll (s)", 1, 3600],
+	["overhead", "Overhead (NM)", 0.1, 50],
 ] as const;
 
 const VIEW = 1000; // SVG viewBox size
@@ -195,8 +199,10 @@ function Plane({
 	// ponytail: flat projection around the user, fine within the API's 250 NM cap
 	const scale = RANGE / s.radius; // viewBox units per NM
 	const dLon = ((a.lon - s.lon + 540) % 360) - 180; // wraps across the antimeridian
-	const x = dLon * 60 * Math.cos((s.lat * Math.PI) / 180) * scale;
-	const y = -(a.lat - s.lat) * 60 * scale;
+	const east = dLon * 60 * Math.cos((s.lat * Math.PI) / 180); // NM
+	const north = (a.lat - s.lat) * 60; // NM
+	const x = east * scale;
+	const y = -north * scale;
 	const round = (v: number | undefined, unit: string) =>
 		v == null ? "-" : Math.round(v) + unit;
 
@@ -208,6 +214,13 @@ function Plane({
 		"--dy": `${-Math.cos(rad) * dist}px`,
 		animationDelay: `${-(a.seenPos ?? 0)}s`, // the fix is already seenPos seconds old
 	} as CSSProperties;
+
+	// Mount time = poll arrival: the per-poll key remounts each plane.
+	const [polledAt] = useState(Date.now);
+	const overhead =
+		a.alt === "ground" || a.track == null
+			? undefined
+			: overheadIn(east, north, a.track, a.gs ?? 0, s.overhead);
 
 	return (
 		<g
@@ -230,7 +243,26 @@ function Plane({
 					{a.alt === "ground" ? "GND" : round(a.alt, "ft")}&nbsp;
 					{round(a.gs, "kt")}
 				</tspan>
+				{overhead != null && (
+					<Eta at={polledAt + (overhead - (a.seenPos ?? 0)) * 1000} />
+				)}
 			</text>
 		</g>
+	);
+}
+
+// Counts down to `at` (epoch ms), gone once overflown.
+function Eta({ at }: { at: number }) {
+	const [now, setNow] = useState(Date.now);
+	useEffect(() => {
+		const id = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(id);
+	}, []);
+	const left = Math.ceil((at - now) / 1000);
+	if (left <= 0) return null;
+	return (
+		<tspan x={10} dy={15}>
+			ETA {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
+		</tspan>
 	);
 }
