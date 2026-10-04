@@ -12,7 +12,7 @@
       opacity: 0.8;
     }
     to {
-      transform: scale(1.2);
+      transform: scale(1); /* ends on the radius circle */
       opacity: 0;
     }
   }

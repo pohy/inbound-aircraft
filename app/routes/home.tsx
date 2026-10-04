@@ -12,7 +12,6 @@ type Settings = {
 	radius: number;
 	poll: number;
 	overhead: number; // NM a track must pass within to count as overflying
-	outbound: number; // s to keep a negative ETA after overflying
 	onlyAirborne: boolean;
 	view: View;
 };
@@ -29,7 +28,6 @@ const DEFAULTS: Settings = {
 	radius: 25,
 	poll: 10,
 	overhead: 1,
-	outbound: 30,
 	onlyAirborne: false,
 	view: HOME,
 };
@@ -40,7 +38,6 @@ const FIELDS = [
 	["radius", "Radius (NM)", 1, 250],
 	["poll", "Poll (s)", 1, 3600],
 	["overhead", "Overhead (NM)", 0.1, 50],
-	["outbound", "Outbound (s)", 0, 3600],
 ] as const;
 
 const VIEW = 1000; // SVG viewBox size
@@ -169,11 +166,16 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					fillRule="evenodd"
 					fillOpacity={0.5}
 				/>
+				{/* Clear center brightening toward the rim, like a wavefront. */}
+				<radialGradient id="pulse">
+					<stop offset="0" stopColor="white" stopOpacity={0} />
+					<stop offset={1 / view.k} stopColor="white" stopOpacity={0.1} />
+				</radialGradient>
 				{/* New key per poll remounts the circle, restarting the animation. */}
 				<circle
 					key={poll.at}
 					r={RANGE}
-					fill="none"
+					fill="url(#pulse)"
 					stroke="white"
 					vectorEffect="non-scaling-stroke"
 					className="opacity-0 motion-safe:animate-pulse-out"
@@ -244,12 +246,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 							>
 								{ident(a)}
 								{eta != null && (
-									<Eta
-										at={eta}
-										outbound={settings.outbound}
-										x={right ? -vm : vm}
-										dy="1.2em"
-									/>
+									<Eta {...eta} x={right ? -vm : vm} dy="1.2em" />
 								)}
 							</text>
 						</g>
@@ -392,15 +389,16 @@ function edge(a: Aircraft, s: Settings, vm: number) {
 	return p && [w + p[0], h + p[1]];
 }
 
-// When a plane holding its track passes overhead (epoch ms), or undefined if it won't
-// or passed longer than the outbound window ago.
+// When a plane holding its track passes overhead and leaves the overhead circle (epoch ms),
+// or undefined if it won't pass or already left.
 function overheadAt(a: Aircraft, s: Settings, polledAt: number) {
 	if (a.alt === "ground" || a.track == null) return;
 	const { east, north } = project(a, s);
 	const t = overheadIn(east, north, a.track, a.gs ?? 0, s.overhead);
 	if (t == null) return;
-	const at = polledAt + (t - (a.seenPos ?? 0)) * 1000;
-	return at > polledAt - s.outbound * 1000 ? at : undefined;
+	const epoch = (secs: number) => polledAt + (secs - (a.seenPos ?? 0)) * 1000;
+	const until = epoch(t.exit);
+	return until > polledAt ? { at: epoch(t.closest), until } : undefined;
 }
 
 const tint = (a: Aircraft) => (a.alt === "ground" ? "#acacac" : "white");
@@ -459,7 +457,7 @@ function Plane({
 					className="absolute -top-[5vmin] -left-[5vmin] size-[10vmin] overflow-visible"
 					fill={tint(a)}
 					stroke={tint(a)}
-					opacity={eta == null ? 0.8 : undefined} // not inbound
+					opacity={eta == null ? 0.7 : undefined} // not inbound
 				>
 					<circle r={5} fill="none" />
 					{a.track != null && (
@@ -482,7 +480,7 @@ function Plane({
 							{round(a.gs, "kt")}
 						</tspan>
 						{eta != null && (
-							<Eta at={eta} outbound={s.outbound} x={10} dy={15} />
+							<Eta {...eta} x={10} dy={15} />
 						)}
 					</text>
 				</svg>
@@ -491,16 +489,16 @@ function Plane({
 	);
 }
 
-// Counts down to `at` (epoch ms), then negative for `outbound` s after overflying, then hides.
+// Counts down to `at` (epoch ms), then negative until the plane leaves the overhead circle at `until`, then hides.
 // x, dy: placement of its line within the parent <text>.
 function Eta({
 	at,
-	outbound,
+	until,
 	x,
 	dy,
 }: {
 	at: number;
-	outbound: number;
+	until: number;
 	x: number;
 	dy: number | string;
 }) {
@@ -509,8 +507,8 @@ function Eta({
 		const id = setInterval(() => setNow(Date.now()), 1000);
 		return () => clearInterval(id);
 	}, []);
+	if (now > until) return null;
 	const left = Math.ceil((at - now) / 1000);
-	if (left < -outbound) return null;
 	const abs = Math.abs(left);
 	return (
 		<tspan x={x} dy={dy}>
