@@ -22,6 +22,49 @@ type AdsbLolAircraft = Omit<Aircraft, "type" | "lat" | "lon" | "alt" | "seenPos"
   seen_pos?: number;
 };
 
+const TTL_MS = 10_000;
+// ponytail: per-process Map keyed by upstream URL; entries self-evict, so no size cap needed
+const cache = new Map<string, Promise<Aircraft[]>>();
+
+function getAircraft(url: string) {
+  let p = cache.get(url);
+  if (!p) {
+    p = fetchAircraft(url);
+    cache.set(url, p);
+    const evict = () => cache.delete(url);
+    // Hold successes for TTL after they arrive; drop failures immediately so the next poll retries.
+    p.then(() => setTimeout(evict, TTL_MS), evict);
+  }
+  return p;
+}
+
+async function fetchAircraft(url: string): Promise<Aircraft[]> {
+  const res = await fetch(url, {
+    // Not request.signal: the fetch is shared by every caller of this cache entry.
+    signal: AbortSignal.timeout(10_000),
+    headers: { "User-Agent": "inbound-aircraft" }, // adsb.lol 403s Node's default "node" UA
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const { ac } = (await res.json()) as { ac: AdsbLolAircraft[] };
+  return ac.flatMap((a): Aircraft[] =>
+    a.lat == null || a.lon == null
+      ? []
+      : [
+          {
+            hex: a.hex,
+            flight: a.flight?.trim(),
+            type: a.t,
+            lat: a.lat,
+            lon: a.lon,
+            gs: a.gs,
+            track: a.track ?? a.calc_track,
+            alt: a.alt_baro,
+            seenPos: a.seen_pos,
+          },
+        ],
+  );
+}
+
 // ponytail: server-side proxy because api.adsb.lol sends no CORS headers
 export async function loader({ request }: Route.LoaderArgs) {
   const params = new URL(request.url).searchParams;
@@ -35,32 +78,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   // Errors are returned, not thrown: a thrown fetcher error would replace the page with the ErrorBoundary.
   try {
-    const res = await fetch(`https://api.adsb.lol/v2/point/${lat}/${lon}/${radius}`, {
-      signal: request.signal,
-      headers: { "User-Agent": "inbound-aircraft" }, // adsb.lol 403s Node's default "node" UA
-    });
-    if (!res.ok) return data({ error: `adsb.lol: HTTP ${res.status}` }, { status: 502 });
-    const { ac } = (await res.json()) as { ac: AdsbLolAircraft[] };
-    return {
-      aircraft: ac.flatMap((a): Aircraft[] =>
-        a.lat == null || a.lon == null
-          ? []
-          : [
-              {
-                hex: a.hex,
-                flight: a.flight?.trim(),
-                type: a.t,
-                lat: a.lat,
-                lon: a.lon,
-                gs: a.gs,
-                track: a.track ?? a.calc_track,
-                alt: a.alt_baro,
-                seenPos: a.seen_pos,
-              },
-            ],
-      ),
-    };
+    return { aircraft: await getAircraft(`https://api.adsb.lol/v2/point/${lat}/${lon}/${radius}`) };
   } catch (e) {
-    return data({ error: `adsb.lol: ${e}` }, { status: 502 });
+    return data({ error: `adsb.lol: ${e instanceof Error ? e.message : e}` }, { status: 502 });
   }
 }
