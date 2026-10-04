@@ -1,6 +1,7 @@
 import { type CSSProperties, useEffect, useState } from "react";
 import { useFetcher } from "react-router";
 import type { Route } from "./+types/home";
+import { BaseMap } from "../map.client";
 import type { Aircraft, loader as aircraftLoader } from "./api.aircraft";
 
 type Settings = {
@@ -71,6 +72,23 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 		return () => clearInterval(id);
 	}, [lat, lon, radius, poll]);
 
+	// Ground elevation at the chosen point, in ft like aircraft altitudes. Open-Meteo allows CORS, so no proxy.
+	const [elevation, setElevation] = useState<number>();
+	useEffect(() => {
+		const ctrl = new AbortController();
+		setElevation(undefined);
+		fetch(
+			`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`,
+			{ signal: ctrl.signal },
+		)
+			.then((r) => r.json())
+			.then((d: { elevation: number[] }) =>
+				setElevation(d.elevation[0] / 0.3048),
+			)
+			.catch(() => {}); // ponytail: shows "-" on failure, no retry
+		return () => ctrl.abort();
+	}, [lat, lon]);
+
 	// Keep the last good aircraft on screen when a poll fails (adsb.lol 429s easily).
 	const [aircraft, setAircraft] = useState<Aircraft[]>([]);
 	const [pulse, setPulse] = useState(0);
@@ -88,9 +106,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
 	return (
 		<main>
+			<BaseMap lat={lat} lon={lon} radius={radius} span={RANGE / VIEW} />
 			<svg
 				viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
-				className="fixed inset-0 h-full w-full font-mono"
+				className="pointer-events-none fixed inset-0 h-full w-full font-mono"
 			>
 				<circle r={RANGE} fill="none" stroke="white" strokeOpacity={0.4} />
 				{/* New key per poll remounts the circle, restarting the animation. */}
@@ -157,7 +176,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					</label>
 				))}
 				<span className="w-full">
-					{visible.length}/{aircraft.length} aircraft
+					{visible.length}/{aircraft.length} aircraft · elev{" "}
+					{elevation == null ? "-" : `${Math.round(elevation)}ft`}
 					{error && <span className="ml-2 text-red-400">{error}</span>}
 				</span>
 			</form>
