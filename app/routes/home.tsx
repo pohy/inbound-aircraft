@@ -2,6 +2,7 @@ import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
 import { BaseMap } from "../map.client";
 import { overheadIn } from "../overhead";
+import { FIELDS, takeShared, toQuery } from "../share";
 import { HOME, spread, toEdge, type View, zoomed } from "../view";
 import type { Route } from "./+types/home";
 import type { Aircraft, loader as aircraftLoader } from "./api.aircraft";
@@ -32,13 +33,6 @@ const DEFAULTS: Settings = {
 	view: HOME,
 };
 const STORAGE_KEY = "settings";
-const FIELDS = [
-	["lat", "Lat", -90, 90],
-	["lon", "Lon", -180, 180],
-	["radius", "Radius (NM)", 1, 250],
-	["poll", "Poll (s)", 1, 3600],
-	["overhead", "Overhead (NM)", 0.1, 50],
-] as const;
 
 const VIEW = 1000; // SVG viewBox size
 const RANGE = VIEW * 0.45; // radius circle in viewBox units
@@ -50,8 +44,12 @@ export function meta({}: Route.MetaArgs) {
 	return [{ title: "Inbound aircraft" }];
 }
 
-// Settings live in localStorage, so the page only renders on the client.
+// Settings live in localStorage, so the page only renders on the client. A share link's config replaces them.
 export function clientLoader(): Settings {
+	const url = new URL(location.href);
+	const shared = takeShared(url);
+	history.replaceState(history.state, "", url); // keeps React Router's state
+	if (shared) return { ...DEFAULTS, ...shared };
 	try {
 		return {
 			...DEFAULTS,
@@ -141,6 +139,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 	// Pointers held down, by pointerId.
 	const pointers = useRef(new Map<number, [number, number]>());
 	const vm = Math.min(innerWidth, innerHeight) / 100; // 1vmin in px
+	const shareUrl = `${location.origin}${location.pathname}?${toQuery(settings)}`;
 
 	return (
 		<main>
@@ -330,6 +329,18 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 						Only airborne
 					</label>
 				</form>
+				{/* Plain link: copy it to share. Opening it reloads with this config. */}
+				<a href={shareUrl} className="mt-2 block break-all underline">
+					{shareUrl}
+				</a>
+				<a
+					href="https://github.com/pohy/inbound-aircraft"
+					target="_blank"
+					rel="noreferrer"
+					className="mt-2 block underline"
+				>
+					github.com/pohy/inbound-aircraft
+				</a>
 			</details>
 			<span className="fixed bottom-2 left-2 text-xs">
 				{visible.length}/{poll.aircraft.length} aircraft · elev{" "}
