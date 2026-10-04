@@ -1,8 +1,8 @@
 import { type CSSProperties, useEffect, useState } from "react";
 import { useFetcher } from "react-router";
-import type { Route } from "./+types/home";
 import { BaseMap } from "../map.client";
 import { overheadIn } from "../overhead";
+import type { Route } from "./+types/home";
 import type { Aircraft, loader as aircraftLoader } from "./api.aircraft";
 
 type Settings = {
@@ -11,8 +11,13 @@ type Settings = {
 	radius: number;
 	poll: number;
 	overhead: number; // NM a track must pass within to count as overflying
-	airborne: boolean;
-	grounded: boolean;
+	onlyAirborne: boolean;
+};
+
+type Poll = {
+	aircraft: Aircraft[];
+	at: number; // arrival, epoch ms
+	prev: Map<string, Aircraft>; // by hex
 };
 
 const DEFAULTS: Settings = {
@@ -21,8 +26,7 @@ const DEFAULTS: Settings = {
 	radius: 25,
 	poll: 10,
 	overhead: 1,
-	airborne: true,
-	grounded: true,
+	onlyAirborne: false,
 };
 const STORAGE_KEY = "settings";
 const FIELDS = [
@@ -35,8 +39,9 @@ const FIELDS = [
 
 const VIEW = 1000; // SVG viewBox size
 const RANGE = VIEW * 0.45; // radius circle in viewBox units
-// ponytail: dead-reckon at most this far past a fix, then freeze until new data. Matches --animate-drift in app.css.
+// ponytail: dead-reckon at most this far past a fix, then freeze until new data. Matches --animate-move in app.css.
 const DRIFT_S = 60;
+const FADE_S = 3; // landed planes fade out over this, or the poll interval if shorter
 
 export function meta({}: Route.MetaArgs) {
 	return [{ title: "Inbound aircraft" }];
@@ -67,14 +72,14 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 		setSettings(next);
 	};
 
-	const { lat, lon, radius, poll } = settings;
+	const { lat, lon, radius, poll: every } = settings;
 	useEffect(() => {
 		const load = () =>
 			fetcher.load(`/api/aircraft?lat=${lat}&lon=${lon}&radius=${radius}`);
 		load();
-		const id = setInterval(load, poll * 1000);
+		const id = setInterval(load, every * 1000);
 		return () => clearInterval(id);
-	}, [lat, lon, radius, poll]);
+	}, [lat, lon, radius, every]);
 
 	// Ground elevation at the chosen point, in ft like aircraft altitudes. Open-Meteo allows CORS, so no proxy.
 	const [elevation, setElevation] = useState<number>();
@@ -94,31 +99,56 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 	}, [lat, lon]);
 
 	// Keep the last good aircraft on screen when a poll fails (adsb.lol 429s easily).
-	const [aircraft, setAircraft] = useState<Aircraft[]>([]);
-	const [pulse, setPulse] = useState(0);
+	// prev: the poll before, aged to this one's arrival, so each plane can glide on from where it was drawn.
+	const [poll, setPoll] = useState<Poll>({
+		aircraft: [],
+		at: 0,
+		prev: new Map(),
+	});
 	const result = fetcher.data;
 	useEffect(() => {
 		if (result && "aircraft" in result) {
-			setAircraft(result.aircraft);
-			setPulse((n) => n + 1); // same render as the new positions
+			const at = Date.now();
+			setPoll((last) => ({
+				aircraft: result.aircraft,
+				at,
+				prev: new Map(
+					last.aircraft.map((a) => [
+						a.hex,
+						{ ...a, seenPos: (a.seenPos ?? 0) + (at - last.at) / 1000 },
+					]),
+				),
+			}));
 		}
 	}, [result]);
 	const error = result && "error" in result ? result.error : undefined;
-	const visible = aircraft.filter((a) =>
-		a.alt === "ground" ? settings.grounded : settings.airborne,
-	);
+	// Only airborne hides grounded planes, except ones that just landed: those fade out.
+	const visible = poll.aircraft.filter((a) => {
+		const before = poll.prev.get(a.hex);
+		return (
+			!settings.onlyAirborne ||
+			a.alt !== "ground" ||
+			(before != null && before.alt !== "ground")
+		);
+	});
 
 	return (
 		<main>
 			<BaseMap lat={lat} lon={lon} radius={radius} span={RANGE / VIEW} />
 			<svg
 				viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
-				className="pointer-events-none fixed inset-0 h-full w-full font-mono"
+				className="pointer-events-none fixed inset-0 h-full w-full"
 			>
-				<circle r={RANGE} fill="none" stroke="white" strokeOpacity={0.4} />
+				{/* Dims the map outside the radius: a square well past any viewport aspect, with the circle cut out. */}
+				<path
+					d={`M${-VIEW * 5} ${-VIEW * 5}H${VIEW * 5}V${VIEW * 5}H${-VIEW * 5}Z
+						M0 ${-RANGE}A${RANGE} ${RANGE} 0 0 0 0 ${RANGE}A${RANGE} ${RANGE} 0 0 0 0 ${-RANGE}Z`}
+					fillRule="evenodd"
+					fillOpacity={0.5}
+				/>
 				{/* New key per poll remounts the circle, restarting the animation. */}
 				<circle
-					key={pulse}
+					key={poll.at}
 					r={RANGE}
 					fill="none"
 					stroke="white"
@@ -126,11 +156,19 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					className="opacity-0 motion-safe:animate-pulse-out"
 				/>
 				<circle r={3} fill="white" fillOpacity={0.2} />
+			</svg>
+			<div className="pointer-events-none fixed inset-0 font-mono">
 				{/* New key per poll remounts each plane, restarting its drift from the fresh position. */}
 				{visible.map((a) => (
-					<Plane key={`${a.hex}-${pulse}`} aircraft={a} settings={settings} />
+					<Plane
+						key={`${a.hex}-${poll.at}`}
+						aircraft={a}
+						prev={poll.prev.get(a.hex)}
+						polledAt={poll.at}
+						settings={settings}
+					/>
 				))}
-			</svg>
+			</div>
 
 			<form
 				className="fixed top-2 left-2 flex flex-wrap items-end gap-2 text-xs"
@@ -165,22 +203,19 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 				<button className="border border-white px-2 py-0.5 text-sm">
 					Apply
 				</button>
-				{/* Unnamed, so FormData skips them; they apply instantly without a refetch. */}
-				{(["airborne", "grounded"] as const).map((key) => (
-					<label
-						key={key}
-						className="flex items-center gap-1 text-sm capitalize"
-					>
-						<input
-							type="checkbox"
-							checked={settings[key]}
-							onChange={(e) => save({ ...settings, [key]: e.target.checked })}
-						/>
-						{key}
-					</label>
-				))}
+				{/* Unnamed, so FormData skips it; applies instantly without a refetch. */}
+				<label className="flex items-center gap-1 text-sm">
+					<input
+						type="checkbox"
+						checked={settings.onlyAirborne}
+						onChange={(e) =>
+							save({ ...settings, onlyAirborne: e.target.checked })
+						}
+					/>
+					Only airborne
+				</label>
 				<span className="w-full">
-					{visible.length}/{aircraft.length} aircraft · elev{" "}
+					{visible.length}/{poll.aircraft.length} aircraft · elev{" "}
 					{elevation == null ? "-" : `${Math.round(elevation)}ft`}
 					{error && <span className="ml-2 text-red-400">{error}</span>}
 				</span>
@@ -189,65 +224,118 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 	);
 }
 
-function Plane({
-	aircraft: a,
-	settings: s,
-}: {
-	aircraft: Aircraft;
-	settings: Settings;
-}) {
+// Fix position (NM and viewBox units) and velocity (units/s) of a plane.
+function project(a: Aircraft, s: Settings) {
 	// ponytail: flat projection around the user, fine within the API's 250 NM cap
 	const scale = RANGE / s.radius; // viewBox units per NM
 	const dLon = ((a.lon - s.lon + 540) % 360) - 180; // wraps across the antimeridian
 	const east = dLon * 60 * Math.cos((s.lat * Math.PI) / 180); // NM
 	const north = (a.lat - s.lat) * 60; // NM
-	const x = east * scale;
-	const y = -north * scale;
+	const speed = a.track == null ? 0 : ((a.gs ?? 0) / 3600) * scale;
+	const rad = ((a.track ?? 0) * Math.PI) / 180;
+	return {
+		east,
+		north,
+		x: east * scale,
+		y: -north * scale,
+		vx: Math.sin(rad) * speed,
+		vy: -Math.cos(rad) * speed,
+	};
+}
+
+// viewBox units as CSS length: the radar SVG scales VIEW to the viewport's short side.
+const vmin = (v: number) => `${(v * 100) / VIEW}vmin`;
+
+// Where the drift animation draws a plane once its fix is seenPos seconds old.
+function drawn(a: Aircraft, s: Settings) {
+	const { x, y, vx, vy } = project(a, s);
+	const t = Math.min(DRIFT_S, a.seenPos ?? 0);
+	return [x + vx * t, y + vy * t];
+}
+
+function Plane({
+	aircraft: a,
+	prev,
+	polledAt,
+	settings: s,
+}: {
+	aircraft: Aircraft;
+	prev?: Aircraft; // same plane in the previous poll, aged to polledAt
+	polledAt: number;
+	settings: Settings;
+}) {
+	const { east, north, x, y, vx, vy } = project(a, s);
 	const round = (v: number | undefined, unit: string) =>
 		v == null ? "-" : Math.round(v) + unit;
 
-	// Distance flown along track in DRIFT_S at ground speed; CSS animates it linearly.
-	const dist = a.track == null ? 0 : ((a.gs ?? 0) / 3600) * DRIFT_S * scale;
-	const rad = ((a.track ?? 0) * Math.PI) / 180;
-	const drift = {
-		"--dx": `${Math.sin(rad) * dist}px`,
-		"--dy": `${-Math.cos(rad) * dist}px`,
-		animationDelay: `${-(a.seenPos ?? 0)}s`, // the fix is already seenPos seconds old
+	// Drift: distance flown along track in DRIFT_S at ground speed, animated linearly.
+	// Settle: start where the previous poll drew the plane and ease onto the new track instead of jumping.
+	// ponytail: ignores a settle/turn still running from the previous poll, only matters when polling faster than 1s
+	const [nx, ny] = drawn(a, s);
+	const [px, py] = prev ? drawn(prev, s) : [nx, ny];
+	const move = {
+		"--dx": vmin(vx * DRIFT_S),
+		"--dy": vmin(vy * DRIFT_S),
+		"--sx": vmin(px - nx),
+		"--sy": vmin(py - ny),
+		animationDelay: `${-(a.seenPos ?? 0)}s, 0s`, // the fix is already seenPos seconds old
+	} as CSSProperties;
+	const turn = {
+		"--turn": `${prev?.track == null || a.track == null ? 0 : ((prev.track - a.track + 540) % 360) - 180}deg`, // shortest way round
 	} as CSSProperties;
 
-	// Mount time = poll arrival: the per-poll key remounts each plane.
-	const [polledAt] = useState(Date.now);
 	const overhead =
 		a.alt === "ground" || a.track == null
 			? undefined
 			: overheadIn(east, north, a.track, a.gs ?? 0, s.overhead);
 
 	return (
-		<g
-			transform={`translate(${x} ${y})`}
-			style={drift}
-			className="motion-safe:animate-drift"
-			fill="white"
-			stroke="white"
+		<div
+			// Only grounded planes left on screen with Only airborne are ones that just landed.
+			className={`absolute top-1/2 left-1/2 ${s.onlyAirborne && a.alt === "ground" ? "animate-fade-out" : ""}`}
+			style={{
+				translate: `${vmin(x)} ${vmin(y)}`,
+				animationDuration: `${Math.min(FADE_S, s.poll)}s`,
+			}}
 		>
-			<circle r={5} fill="none" />
-			{a.track != null && (
-				<line y1={-5} y2={-25} transform={`rotate(${a.track})`} />
-			)}
-			<text x={10} y={-6} fontSize={13} stroke="none">
-				<tspan>
-					{a.flight || a.hex} • {a.type}
-				</tspan>
-				<tspan x={10} dy={15}>
-					{round(a.track, "°")}&nbsp;
-					{a.alt === "ground" ? "GND" : round(a.alt, "ft")}&nbsp;
-					{round(a.gs, "kt")}
-				</tspan>
-				{overhead != null && (
-					<Eta at={polledAt + (overhead - (a.seenPos ?? 0)) * 1000} />
-				)}
-			</text>
-		</g>
+			{/* Own compositor layer, so it moves in sub-pixel steps. Inside the radar SVG, text snapped to whole pixels. */}
+			<div
+				style={move}
+				className="will-change-transform motion-safe:animate-move"
+			>
+				<svg
+					viewBox="-50 -50 100 100"
+					className="absolute -top-[5vmin] -left-[5vmin] size-[10vmin] overflow-visible"
+					fill="white"
+					stroke="white"
+				>
+					<circle r={5} fill="none" />
+					{a.track != null && (
+						<line
+							y1={-5}
+							y2={-25}
+							transform={`rotate(${a.track})`}
+							style={turn}
+							className="motion-safe:animate-turn"
+						/>
+					)}
+					<text x={10} y={-6} fontSize={13} stroke="none">
+						<tspan>
+							{/* {a.flight || a.hex} • {a.type} */}
+							{[a.flight || a.hex, a.type].filter(Boolean).join(" • ")}
+						</tspan>
+						<tspan x={10} dy={15}>
+							{round(a.track, "°")}&nbsp;
+							{a.alt === "ground" ? "GND" : round(a.alt, "ft")}&nbsp;
+							{round(a.gs, "kt")}
+						</tspan>
+						{overhead != null && (
+							<Eta at={polledAt + (overhead - (a.seenPos ?? 0)) * 1000} />
+						)}
+					</text>
+				</svg>
+			</div>
+		</div>
 	);
 }
 
