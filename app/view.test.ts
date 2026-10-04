@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { HOME, zoomed } from "./view.ts";
+import { HOME, toEdge, zoomed } from "./view.ts";
 
 test("zoomed", () => {
 	// The point under the cursor stays put: screen = (p - center) * k.
@@ -18,4 +18,14 @@ test("zoomed", () => {
 	});
 	// Zooming fully out resets, wherever the cursor is.
 	assert.deepEqual(zoomed(v, 0.1, [-300, -300], [0, 0], 450), HOME);
+});
+
+test("toEdge", () => {
+	// On screen: no marker.
+	assert.equal(toEdge(100, -50, 400, 300, 10), undefined);
+	// Straight right / up: pinned to that edge, inset.
+	assert.deepEqual(toEdge(1000, 0, 400, 300, 10), [390, 0]);
+	assert.deepEqual(toEdge(0, -1000, 400, 300, 10), [0, -290]);
+	// Diagonal on a wide screen hits the top/bottom edge first, keeping the direction.
+	assert.deepEqual(toEdge(1000, 1000, 400, 300, 10), [290, 290]);
 });

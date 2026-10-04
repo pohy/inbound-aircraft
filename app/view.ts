@@ -28,3 +28,17 @@ export function spread(ps: [number, number][]): [[number, number], number] {
 		ps.reduce((s, p) => s + Math.hypot(p[0] - cx, p[1] - cy), 0) / ps.length;
 	return [[cx, cy], r];
 }
+
+// Where the ray from the screen center toward (dx, dy) meets the screen edge, `inset` in,
+// or undefined while that point is on screen. All px from the center; w, h: half the screen.
+export function toEdge(
+	dx: number,
+	dy: number,
+	w: number,
+	h: number,
+	inset: number,
+): [number, number] | undefined {
+	if (Math.abs(dx) <= w && Math.abs(dy) <= h) return;
+	const f = Math.min((w - inset) / Math.abs(dx), (h - inset) / Math.abs(dy));
+	return [dx * f, dy * f];
+}

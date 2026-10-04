@@ -10,8 +10,8 @@ test("overheadIn", () => {
 	// Eastbound, offset 0.5 NM north: within tolerance. 2 NM: misses.
 	assert.ok(overheadIn(-10, 0.5, 90, 600, 1)! > 0);
 	assert.equal(overheadIn(-10, 2, 90, 600, 1), undefined);
-	// Southbound from south of center: already overflown.
-	assert.equal(overheadIn(0, -10, 180, 600, 1), undefined);
+	// Southbound from south of center: overflown 60 s ago.
+	assert.equal(overheadIn(0, -10, 180, 600, 1), -60);
 	// Stationary.
 	assert.equal(overheadIn(0, -10, 0, 0, 1), undefined);
 });

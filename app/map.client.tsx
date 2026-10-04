@@ -1,5 +1,6 @@
 // .client module: Leaflet touches `document` on import, so it's kept out of the server bundle.
 import "leaflet/dist/leaflet.css";
+import { type LatLng, latLng } from "leaflet";
 import { useLayoutEffect } from "react";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 
@@ -36,6 +37,13 @@ export function BaseMap(props: Props) {
 	);
 }
 
+// ponytail: Leaflet 1.9 private API, recheck on upgrade
+type Internals = {
+	_loaded: boolean;
+	_move(center: LatLng, zoom: number): void;
+	_moveEnd(zoomChanged: boolean): void;
+};
+
 // Zoom so a degree of longitude spans as many px as in the SVG's flat projection.
 // Layout effect: the radar overlay moves in the same frame while zooming/panning.
 function Fit({ lat, lon, radius, span }: Props) {
@@ -46,9 +54,17 @@ function Fit({ lat, lon, radius, span }: Props) {
 			const pxPerDeg =
 				(60 * Math.cos((lat * Math.PI) / 180) * span * Math.min(x, y)) / radius;
 			// Web Mercator: 256 * 2^zoom px per 360°.
-			map.setView([lat, lon], Math.log2((pxPerDeg * 360) / 256), {
-				animate: false,
-			});
+			const zoom = Math.log2((pxPerDeg * 360) / 256);
+			// setView without animation resets the view, which drops every tile: the map blinked on each
+			// zoom/pan frame. After the first fit, move like Leaflet's own pinch-zoom does, keeping tiles.
+			const m = map as typeof map & Internals;
+			if (!m._loaded) {
+				map.setView([lat, lon], zoom, { animate: false });
+			} else {
+				const zoomChanged = map.getZoom() !== zoom;
+				m._move(latLng(lat, lon), zoom);
+				m._moveEnd(zoomChanged); // loads tiles for the new view (on mobile only moveend does)
+			}
 		};
 		fit();
 		map.on("resize", fit);

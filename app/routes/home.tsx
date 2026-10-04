@@ -2,7 +2,7 @@ import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
 import { BaseMap } from "../map.client";
 import { overheadIn } from "../overhead";
-import { HOME, spread, type View, zoomed } from "../view";
+import { HOME, spread, toEdge, type View, zoomed } from "../view";
 import type { Route } from "./+types/home";
 import type { Aircraft, loader as aircraftLoader } from "./api.aircraft";
 
@@ -12,6 +12,7 @@ type Settings = {
 	radius: number;
 	poll: number;
 	overhead: number; // NM a track must pass within to count as overflying
+	outbound: number; // s to keep a negative ETA after overflying
 	onlyAirborne: boolean;
 	view: View;
 };
@@ -28,6 +29,7 @@ const DEFAULTS: Settings = {
 	radius: 25,
 	poll: 10,
 	overhead: 1,
+	outbound: 30,
 	onlyAirborne: false,
 	view: HOME,
 };
@@ -38,6 +40,7 @@ const FIELDS = [
 	["radius", "Radius (NM)", 1, 250],
 	["poll", "Poll (s)", 1, 3600],
 	["overhead", "Overhead (NM)", 0.1, 50],
+	["outbound", "Outbound (s)", 0, 3600],
 ] as const;
 
 const VIEW = 1000; // SVG viewBox size
@@ -140,6 +143,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 		setSettings((s) => ({ ...s, view: zoomed(s.view, f, around, by, RANGE) }));
 	// Pointers held down, by pointerId.
 	const pointers = useRef(new Map<number, [number, number]>());
+	const vm = Math.min(innerWidth, innerHeight) / 100; // 1vmin in px
 
 	return (
 		<main>
@@ -174,6 +178,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					vectorEffect="non-scaling-stroke"
 					className="opacity-0 motion-safe:animate-pulse-out"
 				/>
+				{/* Overhead tolerance: tracks passing through this get an ETA. Geographic, so it scales with zoom. */}
+				<circle
+					r={(settings.overhead * RANGE) / radius}
+					fill="white"
+					fillOpacity={0.03}
+					stroke="white"
+					strokeWidth={1 / view.k}
+					strokeOpacity={0.1}
+				/>
 				<circle r={3 / view.k} fill="white" fillOpacity={0.2} />
 			</svg>
 			<div
@@ -197,6 +210,51 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					/>
 				))}
 			</div>
+			{/* Zoomed in: a dot on the screen edge toward each plane off screen. */}
+			<svg className="pointer-events-none fixed inset-0 h-full w-full font-mono">
+				{visible.map((a) => {
+					const p = edge(a, settings, vm);
+					if (!p) return null;
+					const right = p[0] > innerWidth / 2; // label points back inward
+					// The dot sits on the ray from the screen center, so the aircraft lies further along it.
+					const toward = Math.atan2(
+						p[1] - innerHeight / 2,
+						p[0] - innerWidth / 2,
+					);
+					const eta = overheadAt(a, settings, poll.at);
+					return (
+						<g
+							key={a.hex}
+							transform={`translate(${p[0]} ${p[1]})`}
+							fill={tint(a)}
+						>
+							<circle r={vm * 0.4} />
+							<line
+								x1={vm * 0.4}
+								x2={vm * 1.6}
+								stroke={tint(a)}
+								transform={`rotate(${(toward * 180) / Math.PI})`}
+							/>
+							<text
+								x={right ? -vm : vm}
+								dy={eta == null ? "0.35em" : "-0.25em"} // centers one or two lines on the dot
+								fontSize={vm * 1.3}
+								textAnchor={right ? "end" : "start"}
+							>
+								{ident(a)}
+								{eta != null && (
+									<Eta
+										at={eta}
+										outbound={settings.outbound}
+										x={right ? -vm : vm}
+										dy="1.2em"
+									/>
+								)}
+							</text>
+						</g>
+					);
+				})}
+			</svg>
 			{/* Gestures: wheel zooms at the cursor, drag pans, two fingers pinch. */}
 			<div
 				className="fixed inset-0 touch-none select-none"
@@ -317,6 +375,32 @@ function drawn(a: Aircraft, s: Settings) {
 	return [x + vx * t, y + vy * t];
 }
 
+// Point on the screen edge (px, inset 2vmin) toward a plane drawn off screen, or undefined while it's on screen.
+// ponytail: uses the fix, not the live drift; a plane crossing the edge between polls, or a window resize,
+// catches up on the next poll, zoom or pan
+function edge(a: Aircraft, s: Settings, vm: number) {
+	const [x, y] = drawn(a, s);
+	const unit = (vm * 100 * s.view.k) / VIEW; // px per viewBox unit
+	const [w, h] = [innerWidth / 2, innerHeight / 2];
+	const p = toEdge((x - s.view.x) * unit, (y - s.view.y) * unit, w, h, 2 * vm);
+	return p && [w + p[0], h + p[1]];
+}
+
+// When a plane holding its track passes overhead (epoch ms), or undefined if it won't
+// or passed longer than the outbound window ago.
+function overheadAt(a: Aircraft, s: Settings, polledAt: number) {
+	if (a.alt === "ground" || a.track == null) return;
+	const { east, north } = project(a, s);
+	const t = overheadIn(east, north, a.track, a.gs ?? 0, s.overhead);
+	if (t == null) return;
+	const at = polledAt + (t - (a.seenPos ?? 0)) * 1000;
+	return at > polledAt - s.outbound * 1000 ? at : undefined;
+}
+
+const tint = (a: Aircraft) => (a.alt === "ground" ? "#acacac" : "white");
+const ident = (a: Aircraft) =>
+	[a.flight || a.hex, a.type].filter(Boolean).join(" • ");
+
 function Plane({
 	aircraft: a,
 	prev,
@@ -328,7 +412,7 @@ function Plane({
 	polledAt: number;
 	settings: Settings;
 }) {
-	const { east, north, x, y, vx, vy } = project(a, s);
+	const { x, y, vx, vy } = project(a, s);
 	const round = (v: number | undefined, unit: string) =>
 		v == null ? "-" : Math.round(v) + unit;
 
@@ -348,10 +432,7 @@ function Plane({
 		"--turn": `${prev?.track == null || a.track == null ? 0 : ((prev.track - a.track + 540) % 360) - 180}deg`, // shortest way round
 	} as CSSProperties;
 
-	const overhead =
-		a.alt === "ground" || a.track == null
-			? undefined
-			: overheadIn(east, north, a.track, a.gs ?? 0, s.overhead);
+	const eta = overheadAt(a, s, polledAt);
 
 	return (
 		<div
@@ -370,8 +451,8 @@ function Plane({
 				<svg
 					viewBox="-50 -50 100 100"
 					className="absolute -top-[5vmin] -left-[5vmin] size-[10vmin] overflow-visible"
-					fill={a.alt === "ground" ? "#acacac" : "white"}
-					stroke={a.alt === "ground" ? "#acacac" : "white"}
+					fill={tint(a)}
+					stroke={tint(a)}
 				>
 					<circle r={5} fill="none" />
 					{a.track != null && (
@@ -386,15 +467,15 @@ function Plane({
 					<text x={10} y={-6} fontSize={13} stroke="none">
 						<tspan>
 							{/* {a.flight || a.hex} • {a.type} */}
-							{[a.flight || a.hex, a.type].filter(Boolean).join(" • ")}
+							{ident(a)}
 						</tspan>
 						<tspan x={10} dy={15}>
 							{round(a.track, "°")}&nbsp;
 							{a.alt === "ground" ? "GND" : round(a.alt, "ft")}&nbsp;
 							{round(a.gs, "kt")}
 						</tspan>
-						{overhead != null && (
-							<Eta at={polledAt + (overhead - (a.seenPos ?? 0)) * 1000} />
+						{eta != null && (
+							<Eta at={eta} outbound={s.outbound} x={10} dy={15} />
 						)}
 					</text>
 				</svg>
@@ -403,18 +484,31 @@ function Plane({
 	);
 }
 
-// Counts down to `at` (epoch ms), gone once overflown.
-function Eta({ at }: { at: number }) {
+// Counts down to `at` (epoch ms), then negative for `outbound` s after overflying, then hides.
+// x, dy: placement of its line within the parent <text>.
+function Eta({
+	at,
+	outbound,
+	x,
+	dy,
+}: {
+	at: number;
+	outbound: number;
+	x: number;
+	dy: number | string;
+}) {
 	const [now, setNow] = useState(Date.now);
 	useEffect(() => {
 		const id = setInterval(() => setNow(Date.now()), 1000);
 		return () => clearInterval(id);
 	}, []);
 	const left = Math.ceil((at - now) / 1000);
-	if (left <= 0) return null;
+	if (left < -outbound) return null;
+	const abs = Math.abs(left);
 	return (
-		<tspan x={10} dy={15}>
-			ETA {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
+		<tspan x={x} dy={dy}>
+			ETA {left < 0 && "-"}
+			{Math.floor(abs / 60)}:{String(abs % 60).padStart(2, "0")}
 		</tspan>
 	);
 }

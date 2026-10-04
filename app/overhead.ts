@@ -1,5 +1,5 @@
-// Seconds until a plane holding its track passes within `tolerance` NM of the center,
-// or undefined if it misses or has already passed. east/north: NM from center; track: ° true; gs: kt.
+// Seconds until a plane holding its track passes within `tolerance` NM of the center (negative: since it did),
+// or undefined if it misses. east/north: NM from center; track: ° true; gs: kt.
 // ponytail: straight line only, turning traffic (approach patterns) gets re-predicted each poll
 export function overheadIn(
 	east: number,
@@ -13,7 +13,5 @@ export function overheadIn(
 	const uy = Math.cos(rad);
 	const along = -(east * ux + north * uy); // NM to closest approach, negative once passed
 	const miss = Math.abs(east * uy - north * ux); // NM off center at closest approach
-	return gs > 0 && along > 0 && miss <= tolerance
-		? (along / gs) * 3600
-		: undefined;
+	return gs > 0 && miss <= tolerance ? (along / gs) * 3600 : undefined;
 }
