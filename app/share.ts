@@ -1,10 +1,10 @@
-// Config the CONF form edits, with input bounds. A share link carries these plus onlyAirborne.
+// Config the CONF form edits, with input bounds and stored unit. A share link carries these plus onlyAirborne.
 export const FIELDS = [
-	["lat", "Lat", -90, 90],
-	["lon", "Lon", -180, 180],
-	["radius", "Radius (NM)", 1, 250],
-	["poll", "Poll (s)", 1, 3600],
-	["overhead", "Overhead (NM)", 0.1, 50],
+	["lat", "Lat", -90, 90, ""],
+	["lon", "Lon", -180, 180, ""],
+	["radius", "Radius", 1, 250, "NM"],
+	["poll", "Poll", 1, 3600, "s"],
+	["overhead", "Overhead", 0.1, 50, "NM"],
 ] as const;
 
 type Shared = Record<(typeof FIELDS)[number][0], number> & {

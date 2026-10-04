@@ -7,6 +7,7 @@ export type Settings = {
 	poll: number;
 	overhead: number; // NM a track must pass within to count as overflying
 	onlyAirborne: boolean;
+	metric: boolean; // display units only, never in a share link
 	view: View;
 };
 
@@ -17,5 +18,6 @@ export const DEFAULTS: Settings = {
 	poll: 10,
 	overhead: 1,
 	onlyAirborne: false,
+	metric: false,
 	view: HOME,
 };

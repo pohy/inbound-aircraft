@@ -2,6 +2,7 @@ import { type CSSProperties, useEffect, useState } from "react";
 import { DRIFT_S, drawn, edge, overheadAt, project, vmin } from "./radar";
 import type { Aircraft } from "./routes/api.aircraft";
 import type { Settings } from "./settings";
+import { unit } from "./units";
 
 const FADE_S = 3; // landed planes fade out over this, or the poll interval if shorter
 
@@ -21,8 +22,10 @@ export function Plane({
 	settings: Settings;
 }) {
 	const { x, y, vx, vy } = project(a, s);
-	const round = (v: number | undefined, unit: string) =>
-		v == null ? "-" : Math.round(v) + unit;
+	const round = (v: number | undefined, stored: string) => {
+		const [u, f] = unit(stored, s.metric);
+		return v == null ? "-" : Math.round(v * f) + u;
+	};
 
 	// Drift: distance flown along track in DRIFT_S at ground speed, animated linearly.
 	// Settle: start where the previous poll drew the plane and ease onto the new track instead of jumping.

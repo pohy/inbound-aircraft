@@ -6,6 +6,7 @@ import { clock, EdgeMarkers, Plane } from "../plane";
 import { at, overheadAt, RANGE, VIEW, vmin } from "../radar";
 import { DEFAULTS, type Settings } from "../settings";
 import { takeShared } from "../share";
+import { unit } from "../units";
 import { spread, zoomed } from "../view";
 import type { Route } from "./+types/home";
 import type { Aircraft, loader as aircraftLoader } from "./api.aircraft";
@@ -28,15 +29,15 @@ export function clientLoader(): Settings {
 	const url = new URL(location.href);
 	const shared = takeShared(url);
 	history.replaceState(history.state, "", url); // keeps React Router's state
-	if (shared) return { ...DEFAULTS, ...shared };
+	let stored = DEFAULTS;
 	try {
-		return {
+		stored = {
 			...DEFAULTS,
 			...JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}"),
 		};
-	} catch {
-		return DEFAULTS;
-	}
+	} catch {}
+	// Units are the viewer's own, so a share link keeps them.
+	return shared ? { ...DEFAULTS, ...shared, metric: stored.metric } : stored;
 }
 clientLoader.hydrate = true as const;
 
@@ -77,6 +78,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			.catch(() => {}); // ponytail: shows "-" on failure, no retry
 		return () => ctrl.abort();
 	}, [lat, lon]);
+	const elev = unit("ft", settings.metric);
 
 	// Keep the last good aircraft on screen when a poll fails (adsb.lol 429s easily).
 	// prev: the poll before, aged to this one's arrival, so each plane can glide on from where it was drawn.
@@ -230,7 +232,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			<Conf settings={settings} setSettings={setSettings} />
 			<span className="fixed bottom-2 left-2 text-xs">
 				{visible.length}/{poll.aircraft.length} aircraft · elev{" "}
-				{elevation == null ? "-" : `${Math.round(elevation)}ft`}
+				{elevation == null ? "-" : `${Math.round(elevation * elev[1])}${elev[0]}`}
 				{error && <span className="ml-2 text-red-400">{error}</span>}
 			</span>
 		</main>
