@@ -1,21 +1,14 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
+import { Conf } from "../conf";
 import { BaseMap } from "../map.client";
-import { overheadIn } from "../overhead";
-import { FIELDS, takeShared, toQuery } from "../share";
-import { HOME, spread, toEdge, type View, zoomed } from "../view";
+import { clock, EdgeMarkers, Plane } from "../plane";
+import { at, overheadAt, RANGE, VIEW, vmin } from "../radar";
+import { DEFAULTS, type Settings } from "../settings";
+import { takeShared } from "../share";
+import { spread, zoomed } from "../view";
 import type { Route } from "./+types/home";
 import type { Aircraft, loader as aircraftLoader } from "./api.aircraft";
-
-type Settings = {
-	lat: number;
-	lon: number;
-	radius: number;
-	poll: number;
-	overhead: number; // NM a track must pass within to count as overflying
-	onlyAirborne: boolean;
-	view: View;
-};
 
 type Poll = {
 	aircraft: Aircraft[];
@@ -23,22 +16,7 @@ type Poll = {
 	prev: Map<string, Aircraft>; // by hex
 };
 
-const DEFAULTS: Settings = {
-	lat: 51.47,
-	lon: -0.4543,
-	radius: 25,
-	poll: 10,
-	overhead: 1,
-	onlyAirborne: false,
-	view: HOME,
-};
 const STORAGE_KEY = "settings";
-
-const VIEW = 1000; // SVG viewBox size
-const RANGE = VIEW * 0.45; // radius circle in viewBox units
-// ponytail: dead-reckon at most this far past a fix, then freeze until new data. Matches --animate-move in app.css.
-const DRIFT_S = 60;
-const FADE_S = 3; // landed planes fade out over this, or the poll interval if shorter
 const TITLE = "Inbound aircraft";
 
 export function meta({}: Route.MetaArgs) {
@@ -155,8 +133,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 		setSettings((s) => ({ ...s, view: zoomed(s.view, f, around, by, RANGE) }));
 	// Pointers held down, by pointerId.
 	const pointers = useRef(new Map<number, [number, number]>());
-	const vm = Math.min(innerWidth, innerHeight) / 100; // 1vmin in px
-	const shareUrl = `${location.origin}${location.pathname}?${toQuery(settings)}`;
 
 	return (
 		<main>
@@ -228,47 +204,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					/>
 				))}
 			</div>
-			{/* Zoomed in: a dot on the screen edge toward each plane off screen. */}
-			<svg className="pointer-events-none fixed inset-0 h-full w-full">
-				{visible.map((a) => {
-					const p = edge(a, settings, vm);
-					if (!p) return null;
-					const right = p[0] > innerWidth / 2; // label points back inward
-					// The dot sits on the ray from the screen center, so the aircraft lies further along it.
-					const toward = Math.atan2(
-						p[1] - innerHeight / 2,
-						p[0] - innerWidth / 2,
-					);
-					const eta = overheadAt(a, settings, poll.at);
-					return (
-						<g
-							key={a.hex}
-							transform={`translate(${p[0]} ${p[1]})`}
-							fill={tint(a)}
-							opacity={eta == null ? 0.8 : undefined} // not inbound
-						>
-							<circle r={vm * 0.4} />
-							<line
-								x1={vm * 0.4}
-								x2={vm * 1.6}
-								stroke={tint(a)}
-								transform={`rotate(${(toward * 180) / Math.PI})`}
-							/>
-							<text
-								x={right ? -vm : vm}
-								dy={eta == null ? "0.35em" : "-0.25em"} // centers one or two lines on the dot
-								fontSize={vm * 1.3}
-								textAnchor={right ? "end" : "start"}
-							>
-								{ident(a)}
-								{eta != null && (
-									<Eta {...eta} x={right ? -vm : vm} dy="1.2em" />
-								)}
-							</text>
-						</g>
-					);
-				})}
-			</svg>
+			<EdgeMarkers aircraft={visible} polledAt={poll.at} settings={settings} />
 			{/* Gestures: wheel zooms at the cursor, drag pans, two fingers pinch. */}
 			<div
 				className="fixed inset-0 touch-none select-none"
@@ -291,75 +227,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 				onPointerCancel={(e) => pointers.current.delete(e.pointerId)}
 			/>
 
-			<details className="fixed top-2 left-2 text-xs opacity-50 open:opacity-100">
-				<summary className="cursor-pointer list-none text-sm [&::-webkit-details-marker]:hidden">
-					CONF
-				</summary>
-				<form
-					className="mt-2 flex flex-wrap items-end gap-2"
-					onSubmit={(e) => {
-						e.preventDefault();
-						const next = {
-							...settings,
-							...Object.fromEntries(
-								[...new FormData(e.currentTarget)].map(([k, v]) => [
-									k,
-									Number(v),
-								]),
-							),
-						};
-						// A new point or radius starts from the fit-to-radius view.
-						setSettings(
-							next.lat === lat && next.lon === lon && next.radius === radius
-								? next
-								: { ...next, view: HOME },
-						);
-					}}
-				>
-					{FIELDS.map(([name, label, min, max]) => (
-						<label key={name} className="flex flex-col gap-1">
-							{label}
-							<input
-								name={name}
-								type="number"
-								step="any"
-								min={min}
-								max={max}
-								required
-								defaultValue={settings[name]}
-								className="w-28 border border-white bg-black px-1 py-0.5 text-sm"
-							/>
-						</label>
-					))}
-					<button className="border border-white px-2 py-0.5 text-sm">
-						Apply
-					</button>
-					{/* Unnamed, so FormData skips it; applies instantly without a refetch. */}
-					<label className="flex items-center gap-1 text-sm">
-						<input
-							type="checkbox"
-							checked={settings.onlyAirborne}
-							onChange={(e) =>
-								setSettings({ ...settings, onlyAirborne: e.target.checked })
-							}
-						/>
-						Only airborne
-					</label>
-				</form>
-				<p className="mt-2">Scroll or pinch to zoom · drag to pan</p>
-				{/* Plain link: copy it to share. Opening it reloads with this config. */}
-				<a href={shareUrl} className="mt-2 block break-all underline">
-					{shareUrl}
-				</a>
-				<a
-					href="https://github.com/pohy/inbound-aircraft"
-					target="_blank"
-					rel="noreferrer"
-					className="mt-2 block underline"
-				>
-					github.com/pohy/inbound-aircraft
-				</a>
-			</details>
+			<Conf settings={settings} setSettings={setSettings} />
 			<span className="fixed bottom-2 left-2 text-xs">
 				{visible.length}/{poll.aircraft.length} aircraft · elev{" "}
 				{elevation == null ? "-" : `${Math.round(elevation)}ft`}
@@ -367,186 +235,4 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			</span>
 		</main>
 	);
-}
-
-// Fix position (NM and viewBox units) and velocity (units/s) of a plane.
-function project(a: Aircraft, s: Settings) {
-	// ponytail: flat projection around the user, fine within the API's 250 NM cap
-	const scale = RANGE / s.radius; // viewBox units per NM
-	const dLon = ((a.lon - s.lon + 540) % 360) - 180; // wraps across the antimeridian
-	const east = dLon * 60 * Math.cos((s.lat * Math.PI) / 180); // NM
-	const north = (a.lat - s.lat) * 60; // NM
-	const speed = a.track == null ? 0 : ((a.gs ?? 0) / 3600) * scale;
-	const rad = ((a.track ?? 0) * Math.PI) / 180;
-	return {
-		east,
-		north,
-		x: east * scale,
-		y: -north * scale,
-		vx: Math.sin(rad) * speed,
-		vy: -Math.cos(rad) * speed,
-	};
-}
-
-// viewBox units as CSS length: the radar SVG scales VIEW to the viewport's short side, magnified by zoom --k.
-const vmin = (v: number) => `calc(${(v * 100) / VIEW}vmin * var(--k))`;
-
-// Pointer as a screen offset from the viewport center, in viewBox units at k = 1.
-function at(e: { clientX: number; clientY: number }): [number, number] {
-	const unit = Math.min(innerWidth, innerHeight) / VIEW; // px
-	return [
-		(e.clientX - innerWidth / 2) / unit,
-		(e.clientY - innerHeight / 2) / unit,
-	];
-}
-
-// Where the drift animation draws a plane once its fix is seenPos seconds old.
-function drawn(a: Aircraft, s: Settings) {
-	const { x, y, vx, vy } = project(a, s);
-	const t = Math.min(DRIFT_S, a.seenPos ?? 0);
-	return [x + vx * t, y + vy * t];
-}
-
-// Point on the screen edge (px, inset 2vmin) toward a plane drawn off screen, or undefined while it's on screen.
-// ponytail: uses the fix, not the live drift; a plane crossing the edge between polls, or a window resize,
-// catches up on the next poll, zoom or pan
-function edge(a: Aircraft, s: Settings, vm: number) {
-	const [x, y] = drawn(a, s);
-	const unit = (vm * 100 * s.view.k) / VIEW; // px per viewBox unit
-	const [w, h] = [innerWidth / 2, innerHeight / 2];
-	const p = toEdge((x - s.view.x) * unit, (y - s.view.y) * unit, w, h, 2 * vm);
-	return p && [w + p[0], h + p[1]];
-}
-
-// When a plane holding its track passes overhead and leaves the overhead circle (epoch ms),
-// or undefined if it won't pass or already left.
-function overheadAt(a: Aircraft, s: Settings, polledAt: number) {
-	if (a.alt === "ground" || a.track == null) return;
-	const { east, north } = project(a, s);
-	const t = overheadIn(east, north, a.track, a.gs ?? 0, s.overhead);
-	if (t == null) return;
-	const epoch = (secs: number) => polledAt + (secs - (a.seenPos ?? 0)) * 1000;
-	const until = epoch(t.exit);
-	return until > polledAt ? { at: epoch(t.closest), until } : undefined;
-}
-
-const tint = (a: Aircraft) => (a.alt === "ground" ? "#acacac" : "white");
-const ident = (a: Aircraft) =>
-	[a.flight || a.hex, a.type].filter(Boolean).join(" • ");
-
-function Plane({
-	aircraft: a,
-	prev,
-	polledAt,
-	settings: s,
-}: {
-	aircraft: Aircraft;
-	prev?: Aircraft; // same plane in the previous poll, aged to polledAt
-	polledAt: number;
-	settings: Settings;
-}) {
-	const { x, y, vx, vy } = project(a, s);
-	const round = (v: number | undefined, unit: string) =>
-		v == null ? "-" : Math.round(v) + unit;
-
-	// Drift: distance flown along track in DRIFT_S at ground speed, animated linearly.
-	// Settle: start where the previous poll drew the plane and ease onto the new track instead of jumping.
-	// ponytail: ignores a settle/turn still running from the previous poll, only matters when polling faster than 1s
-	const [nx, ny] = drawn(a, s);
-	const [px, py] = prev ? drawn(prev, s) : [nx, ny];
-	const move = {
-		"--dx": vmin(vx * DRIFT_S),
-		"--dy": vmin(vy * DRIFT_S),
-		"--sx": vmin(px - nx),
-		"--sy": vmin(py - ny),
-		animationDelay: `${-(a.seenPos ?? 0)}s, 0s`, // the fix is already seenPos seconds old
-	} as CSSProperties;
-	const turn = {
-		"--turn": `${prev?.track == null || a.track == null ? 0 : ((prev.track - a.track + 540) % 360) - 180}deg`, // shortest way round
-	} as CSSProperties;
-
-	const eta = overheadAt(a, s, polledAt);
-
-	return (
-		<div
-			// Only grounded planes left on screen with Only airborne are ones that just landed.
-			className={`absolute top-1/2 left-1/2 ${s.onlyAirborne && a.alt === "ground" ? "animate-fade-out" : ""}`}
-			style={{
-				translate: `${vmin(x)} ${vmin(y)}`,
-				animationDuration: `${Math.min(FADE_S, s.poll)}s`,
-			}}
-		>
-			{/* Own compositor layer, so it moves in sub-pixel steps. Inside the radar SVG, text snapped to whole pixels. */}
-			<div
-				style={move}
-				className="will-change-transform motion-safe:animate-move"
-			>
-				<svg
-					viewBox="-50 -50 100 100"
-					className="absolute -top-[5vmin] -left-[5vmin] size-[10vmin] overflow-visible"
-					fill={tint(a)}
-					stroke={tint(a)}
-					opacity={eta == null ? 0.7 : undefined} // not inbound
-				>
-					<circle r={5} fill="none" />
-					{a.track != null && (
-						<line
-							y1={-5}
-							y2={-25}
-							transform={`rotate(${a.track})`}
-							style={turn}
-							className="motion-safe:animate-turn"
-						/>
-					)}
-					<text x={10} y={-6} fontSize={13} stroke="none">
-						<tspan>
-							{/* {a.flight || a.hex} • {a.type} */}
-							{ident(a)}
-						</tspan>
-						<tspan x={10} dy={15}>
-							{round(a.track, "°")}&nbsp;
-							{a.alt === "ground" ? "GND" : round(a.alt, "ft")}&nbsp;
-							{round(a.gs, "kt")}
-						</tspan>
-						{eta != null && (
-							<Eta {...eta} x={10} dy={15} />
-						)}
-					</text>
-				</svg>
-			</div>
-		</div>
-	);
-}
-
-// Counts down to `at` (epoch ms), then negative until the plane leaves the overhead circle at `until`, then hides.
-// x, dy: placement of its line within the parent <text>.
-function Eta({
-	at,
-	until,
-	x,
-	dy,
-}: {
-	at: number;
-	until: number;
-	x: number;
-	dy: number | string;
-}) {
-	const [now, setNow] = useState(Date.now);
-	useEffect(() => {
-		const id = setInterval(() => setNow(Date.now()), 1000);
-		return () => clearInterval(id);
-	}, []);
-	if (now > until) return null;
-	return (
-		<tspan x={x} dy={dy}>
-			ETA {clock(at, now)}
-		</tspan>
-	);
-}
-
-// Time left until `at` (epoch ms) as m:ss, negative once past.
-function clock(at: number, now: number) {
-	const left = Math.ceil((at - now) / 1000);
-	const abs = Math.abs(left);
-	return `${left < 0 ? "-" : ""}${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, "0")}`;
 }
