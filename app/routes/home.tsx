@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useState } from "react";
 import { useFetcher } from "react-router";
 import type { Route } from "./+types/home";
 import type { Aircraft, loader as aircraftLoader } from "./api.aircraft";
@@ -30,6 +30,8 @@ const FIELDS = [
 
 const VIEW = 1000; // SVG viewBox size
 const RANGE = VIEW * 0.45; // radius circle in viewBox units
+// ponytail: dead-reckon at most this far past a fix, then freeze until new data. Matches --animate-drift in app.css.
+const DRIFT_S = 60;
 
 export function meta({}: Route.MetaArgs) {
 	return [{ title: "Inbound aircraft" }];
@@ -100,9 +102,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					vectorEffect="non-scaling-stroke"
 					className="opacity-0 motion-safe:animate-pulse-out"
 				/>
-				{/* <circle r={3} fill="white" /> */}
+				<circle r={3} fill="white" fillOpacity={0.2} />
+				{/* New key per poll remounts each plane, restarting its drift from the fresh position. */}
 				{visible.map((a) => (
-					<Plane key={a.hex} aircraft={a} settings={settings} />
+					<Plane key={`${a.hex}-${pulse}`} aircraft={a} settings={settings} />
 				))}
 			</svg>
 
@@ -177,8 +180,23 @@ function Plane({
 	const round = (v: number | undefined, unit: string) =>
 		v == null ? "-" : Math.round(v) + unit;
 
+	// Distance flown along track in DRIFT_S at ground speed; CSS animates it linearly.
+	const dist = a.track == null ? 0 : ((a.gs ?? 0) / 3600) * DRIFT_S * scale;
+	const rad = ((a.track ?? 0) * Math.PI) / 180;
+	const drift = {
+		"--dx": `${Math.sin(rad) * dist}px`,
+		"--dy": `${-Math.cos(rad) * dist}px`,
+		animationDelay: `${-(a.seenPos ?? 0)}s`, // the fix is already seenPos seconds old
+	} as CSSProperties;
+
 	return (
-		<g transform={`translate(${x} ${y})`} fill="white" stroke="white">
+		<g
+			transform={`translate(${x} ${y})`}
+			style={drift}
+			className="motion-safe:animate-drift"
+			fill="white"
+			stroke="white"
+		>
 			<circle r={5} fill="none" />
 			{a.track != null && (
 				<line y1={-5} y2={-25} transform={`rotate(${a.track})`} />

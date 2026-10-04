@@ -5,6 +5,7 @@
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 
   --animate-pulse-out: pulse-out 1s ease-out forwards;
+  --animate-drift: drift 60s linear forwards; /* DRIFT_S in home.tsx */
   @keyframes pulse-out {
     from {
       transform: scale(0);
@@ -13,6 +14,11 @@
     to {
       transform: scale(1.2);
       opacity: 0;
+    }
+  }
+  @keyframes drift {
+    to {
+      translate: var(--dx) var(--dy);
     }
   }
 }

@@ -10,14 +10,16 @@ export type Aircraft = {
   gs?: number; // knots
   track?: number; // degrees true
   alt?: number | "ground"; // feet
+  seenPos?: number; // seconds since the position was received
 };
 
-type AdsbLolAircraft = Omit<Aircraft, "type" | "lat" | "lon" | "alt"> & {
+type AdsbLolAircraft = Omit<Aircraft, "type" | "lat" | "lon" | "alt" | "seenPos"> & {
   t?: string;
   lat?: number;
   lon?: number;
   calc_track?: number;
   alt_baro?: number | "ground";
+  seen_pos?: number;
 };
 
 // ponytail: server-side proxy because api.adsb.lol sends no CORS headers
@@ -53,6 +55,7 @@ export async function loader({ request }: Route.LoaderArgs) {
                 gs: a.gs,
                 track: a.track ?? a.calc_track,
                 alt: a.alt_baro,
+                seenPos: a.seen_pos,
               },
             ],
       ),
