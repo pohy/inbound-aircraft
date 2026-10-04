@@ -39,9 +39,10 @@ const RANGE = VIEW * 0.45; // radius circle in viewBox units
 // ponytail: dead-reckon at most this far past a fix, then freeze until new data. Matches --animate-move in app.css.
 const DRIFT_S = 60;
 const FADE_S = 3; // landed planes fade out over this, or the poll interval if shorter
+const TITLE = "Inbound aircraft";
 
 export function meta({}: Route.MetaArgs) {
-	return [{ title: "Inbound aircraft" }];
+	return [{ title: TITLE }];
 }
 
 // Settings live in localStorage, so the page only renders on the client. A share link's config replaces them.
@@ -132,6 +133,22 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			(before != null && before.alt !== "ground")
 		);
 	});
+	// Tab title counts down to the soonest upcoming overhead pass, so it reads from a background tab.
+	// ponytail: Chrome slows timers in tabs hidden 5+ min to once a minute; tick from a Worker if that bites
+	useEffect(() => {
+		const etas = visible.flatMap((a) => overheadAt(a, settings, poll.at) ?? []);
+		const tick = () => {
+			const now = Date.now();
+			const next = Math.min(
+				...etas.filter((e) => e.at > now).map((e) => e.at), // passed ones skip to the next
+			);
+			document.title =
+				next < Infinity ? `[${clock(next, now)}] ${TITLE}` : TITLE;
+		};
+		tick();
+		const id = setInterval(tick, 1000);
+		return () => clearInterval(id);
+	}, [poll, settings]);
 
 	// Functional update: several pointer moves can land before a render.
 	const zoom = (f: number, around: [number, number], by: [number, number]) =>
@@ -329,6 +346,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 						Only airborne
 					</label>
 				</form>
+				<p className="mt-2">Scroll or pinch to zoom · drag to pan</p>
 				{/* Plain link: copy it to share. Opening it reloads with this config. */}
 				<a href={shareUrl} className="mt-2 block break-all underline">
 					{shareUrl}
@@ -519,12 +537,16 @@ function Eta({
 		return () => clearInterval(id);
 	}, []);
 	if (now > until) return null;
-	const left = Math.ceil((at - now) / 1000);
-	const abs = Math.abs(left);
 	return (
 		<tspan x={x} dy={dy}>
-			ETA {left < 0 && "-"}
-			{Math.floor(abs / 60)}:{String(abs % 60).padStart(2, "0")}
+			ETA {clock(at, now)}
 		</tspan>
 	);
+}
+
+// Time left until `at` (epoch ms) as m:ss, negative once past.
+function clock(at: number, now: number) {
+	const left = Math.ceil((at - now) / 1000);
+	const abs = Math.abs(left);
+	return `${left < 0 ? "-" : ""}${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, "0")}`;
 }
