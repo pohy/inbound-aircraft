@@ -185,6 +185,27 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 				/>
 				<circle r={3 / view.k} fill="white" fillOpacity={0.2} />
 			</svg>
+			{/* Gestures: wheel zooms at the cursor, drag pans, two fingers pinch. Under the planes, so their links take clicks. */}
+			<div
+				className="fixed inset-0 touch-none select-none"
+				onWheel={(e) =>
+					zoom(2 ** ((-e.deltaY * (e.deltaMode ? 33 : 1)) / 200), at(e), [0, 0])
+				}
+				onPointerDown={(e) => {
+					e.currentTarget.setPointerCapture(e.pointerId);
+					pointers.current.set(e.pointerId, at(e));
+				}}
+				onPointerMove={(e) => {
+					const ps = pointers.current;
+					if (!ps.has(e.pointerId)) return;
+					const [c0, r0] = spread([...ps.values()]);
+					ps.set(e.pointerId, at(e));
+					const [c1, r1] = spread([...ps.values()]);
+					zoom(r0 ? r1 / r0 : 1, c0, [c1[0] - c0[0], c1[1] - c0[1]]);
+				}}
+				onPointerUp={(e) => pointers.current.delete(e.pointerId)}
+				onPointerCancel={(e) => pointers.current.delete(e.pointerId)}
+			/>
 			<div
 				className="pointer-events-none fixed inset-0"
 				// --k scales positions and drift (see vmin), not the markers themselves.
@@ -207,27 +228,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 				))}
 			</div>
 			<EdgeMarkers aircraft={visible} polledAt={poll.at} settings={settings} />
-			{/* Gestures: wheel zooms at the cursor, drag pans, two fingers pinch. */}
-			<div
-				className="fixed inset-0 touch-none select-none"
-				onWheel={(e) =>
-					zoom(2 ** ((-e.deltaY * (e.deltaMode ? 33 : 1)) / 200), at(e), [0, 0])
-				}
-				onPointerDown={(e) => {
-					e.currentTarget.setPointerCapture(e.pointerId);
-					pointers.current.set(e.pointerId, at(e));
-				}}
-				onPointerMove={(e) => {
-					const ps = pointers.current;
-					if (!ps.has(e.pointerId)) return;
-					const [c0, r0] = spread([...ps.values()]);
-					ps.set(e.pointerId, at(e));
-					const [c1, r1] = spread([...ps.values()]);
-					zoom(r0 ? r1 / r0 : 1, c0, [c1[0] - c0[0], c1[1] - c0[1]]);
-				}}
-				onPointerUp={(e) => pointers.current.delete(e.pointerId)}
-				onPointerCancel={(e) => pointers.current.delete(e.pointerId)}
-			/>
 
 			<Conf settings={settings} setSettings={setSettings} />
 			<span className="fixed bottom-2 left-2 text-xs">

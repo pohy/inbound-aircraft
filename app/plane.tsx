@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useState } from "react";
+import { type CSSProperties, Fragment, useEffect, useState } from "react";
 import { DRIFT_S, drawn, edge, overheadAt, project, vmin } from "./radar";
 import type { Aircraft } from "./routes/api.aircraft";
 import type { Settings } from "./settings";
@@ -7,8 +7,22 @@ import { unit } from "./units";
 const FADE_S = 3; // landed planes fade out over this, or the poll interval if shorter
 
 const tint = (a: Aircraft) => (a.alt === "ground" ? "#acacac" : "white");
-const ident = (a: Aircraft) =>
-	[a.flight || a.hex, a.type].filter(Boolean).join(" • ");
+// Flight and type as links to a web search. Must sit inside an SVG <text>.
+// Above the gesture layer, so dragging from a label doesn't pan.
+const Ident = ({ a }: { a: Aircraft }) =>
+	[a.flight || a.hex, a.type].filter(Boolean).map((t, i) => (
+		<Fragment key={i}>
+			{i > 0 && " • "}
+			<a
+				href={`https://www.google.com/search?q=${encodeURIComponent(t!)}`}
+				target="_blank"
+				rel="noreferrer"
+				className="pointer-events-auto hover:underline"
+			>
+				{t}
+			</a>
+		</Fragment>
+	));
 
 export function Plane({
 	aircraft: a,
@@ -79,7 +93,7 @@ export function Plane({
 					<text x={10} y={-6} fontSize={13} stroke="none">
 						<tspan>
 							{/* {a.flight || a.hex} • {a.type} */}
-							{ident(a)}
+							<Ident a={a} />
 						</tspan>
 						<tspan x={10} dy={15}>
 							{round(a.track, "°")}&nbsp;
@@ -139,7 +153,7 @@ export function EdgeMarkers({
 							fontSize={vm * 1.3}
 							textAnchor={right ? "end" : "start"}
 						>
-							{ident(a)}
+							<Ident a={a} />
 							{eta != null && (
 								<Eta {...eta} x={right ? -vm : vm} dy="1.2em" />
 							)}
