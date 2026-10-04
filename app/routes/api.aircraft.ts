@@ -4,6 +4,7 @@ import type { Route } from "./+types/api.aircraft";
 export type Aircraft = {
   hex: string;
   flight?: string;
+  type?: string; // ICAO type designator, e.g. A320
   lat: number;
   lon: number;
   gs?: number; // knots
@@ -11,7 +12,8 @@ export type Aircraft = {
   alt?: number | "ground"; // feet
 };
 
-type AdsbLolAircraft = Omit<Aircraft, "lat" | "lon" | "alt"> & {
+type AdsbLolAircraft = Omit<Aircraft, "type" | "lat" | "lon" | "alt"> & {
+  t?: string;
   lat?: number;
   lon?: number;
   calc_track?: number;
@@ -45,6 +47,7 @@ export async function loader({ request }: Route.LoaderArgs) {
               {
                 hex: a.hex,
                 flight: a.flight?.trim(),
+                type: a.t,
                 lat: a.lat,
                 lon: a.lon,
                 gs: a.gs,
