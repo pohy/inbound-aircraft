@@ -1,6 +1,6 @@
 // .client module: Leaflet touches `document` on import, so it's kept out of the server bundle.
 import "leaflet/dist/leaflet.css";
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 
 type Props = {
@@ -28,6 +28,8 @@ export function BaseMap(props: Props) {
 				url="https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png"
 				attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/">Humanitarian OpenStreetMap Team</a> hosted by <a href="https://openstreetmap.fr/">OpenStreetMap France</a>'
 				opacity={0.4} // dimmed so the white radar stays readable
+				maxNativeZoom={18}
+				maxZoom={22} // upscale past 18, or Leaflet clamps setView and the map desyncs from the radar when zoomed in
 			/>
 			<Fit {...props} />
 		</MapContainer>
@@ -35,9 +37,10 @@ export function BaseMap(props: Props) {
 }
 
 // Zoom so a degree of longitude spans as many px as in the SVG's flat projection.
+// Layout effect: the radar overlay moves in the same frame while zooming/panning.
 function Fit({ lat, lon, radius, span }: Props) {
 	const map = useMap();
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const fit = () => {
 			const { x, y } = map.getSize();
 			const pxPerDeg =

@@ -1,7 +1,8 @@
-import { type CSSProperties, useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
 import { BaseMap } from "../map.client";
 import { overheadIn } from "../overhead";
+import { HOME, spread, type View, zoomed } from "../view";
 import type { Route } from "./+types/home";
 import type { Aircraft, loader as aircraftLoader } from "./api.aircraft";
 
@@ -12,6 +13,7 @@ type Settings = {
 	poll: number;
 	overhead: number; // NM a track must pass within to count as overflying
 	onlyAirborne: boolean;
+	view: View;
 };
 
 type Poll = {
@@ -27,6 +29,7 @@ const DEFAULTS: Settings = {
 	poll: 10,
 	overhead: 1,
 	onlyAirborne: false,
+	view: HOME,
 };
 const STORAGE_KEY = "settings";
 const FIELDS = [
@@ -66,13 +69,13 @@ export function HydrateFallback() {
 
 export default function Home({ loaderData }: Route.ComponentProps) {
 	const [settings, setSettings] = useState(loaderData);
+	useEffect(
+		() => localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)),
+		[settings],
+	);
 	const fetcher = useFetcher<typeof aircraftLoader>();
-	const save = (next: Settings) => {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-		setSettings(next);
-	};
 
-	const { lat, lon, radius, poll: every } = settings;
+	const { lat, lon, radius, poll: every, view } = settings;
 	useEffect(() => {
 		const load = () =>
 			fetcher.load(`/api/aircraft?lat=${lat}&lon=${lon}&radius=${radius}`);
@@ -132,11 +135,27 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 		);
 	});
 
+	// Functional update: several pointer moves can land before a render.
+	const zoom = (f: number, around: [number, number], by: [number, number]) =>
+		setSettings((s) => ({ ...s, view: zoomed(s.view, f, around, by, RANGE) }));
+	// Pointers held down, by pointerId.
+	const pointers = useRef(new Map<number, [number, number]>());
+
 	return (
 		<main>
-			<BaseMap lat={lat} lon={lon} radius={radius} span={RANGE / VIEW} />
+			{/* Centered on the view center, mapped back through the flat projection; zoom k fits radius/k NM. */}
+			{/* ponytail: flat vs Mercator scale differs ~tan(lat)·Δlat away from the user, so zoomed far off center planes
+			    sit up to ~1% of the screen off the map (more at big radii). Project planes through Leaflet if it shows. */}
+			<BaseMap
+				lat={lat - (view.y * radius) / RANGE / 60}
+				lon={
+					lon + (view.x * radius) / RANGE / 60 / Math.cos((lat * Math.PI) / 180)
+				}
+				radius={radius / view.k}
+				span={RANGE / VIEW}
+			/>
 			<svg
-				viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
+				viewBox={`${view.x - VIEW / 2 / view.k} ${view.y - VIEW / 2 / view.k} ${VIEW / view.k} ${VIEW / view.k}`}
 				className="pointer-events-none fixed inset-0 h-full w-full"
 			>
 				{/* Dims the map outside the radius: a square well past any viewport aspect, with the circle cut out. */}
@@ -155,9 +174,18 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					vectorEffect="non-scaling-stroke"
 					className="opacity-0 motion-safe:animate-pulse-out"
 				/>
-				<circle r={3} fill="white" fillOpacity={0.2} />
+				<circle r={3 / view.k} fill="white" fillOpacity={0.2} />
 			</svg>
-			<div className="pointer-events-none fixed inset-0 font-mono">
+			<div
+				className="pointer-events-none fixed inset-0 font-mono"
+				// --k scales positions and drift (see vmin), not the markers themselves.
+				style={
+					{
+						"--k": view.k,
+						translate: `${vmin(-view.x)} ${vmin(-view.y)}`,
+					} as CSSProperties
+				}
+			>
 				{/* New key per poll remounts each plane, restarting its drift from the fresh position. */}
 				{visible.map((a) => (
 					<Plane
@@ -169,12 +197,33 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					/>
 				))}
 			</div>
+			{/* Gestures: wheel zooms at the cursor, drag pans, two fingers pinch. */}
+			<div
+				className="fixed inset-0 touch-none select-none"
+				onWheel={(e) =>
+					zoom(2 ** ((-e.deltaY * (e.deltaMode ? 33 : 1)) / 200), at(e), [0, 0])
+				}
+				onPointerDown={(e) => {
+					e.currentTarget.setPointerCapture(e.pointerId);
+					pointers.current.set(e.pointerId, at(e));
+				}}
+				onPointerMove={(e) => {
+					const ps = pointers.current;
+					if (!ps.has(e.pointerId)) return;
+					const [c0, r0] = spread([...ps.values()]);
+					ps.set(e.pointerId, at(e));
+					const [c1, r1] = spread([...ps.values()]);
+					zoom(r0 ? r1 / r0 : 1, c0, [c1[0] - c0[0], c1[1] - c0[1]]);
+				}}
+				onPointerUp={(e) => pointers.current.delete(e.pointerId)}
+				onPointerCancel={(e) => pointers.current.delete(e.pointerId)}
+			/>
 
 			<form
 				className="fixed top-2 left-2 flex flex-wrap items-end gap-2 text-xs"
 				onSubmit={(e) => {
 					e.preventDefault();
-					save({
+					const next = {
 						...settings,
 						...Object.fromEntries(
 							[...new FormData(e.currentTarget)].map(([k, v]) => [
@@ -182,7 +231,13 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 								Number(v),
 							]),
 						),
-					});
+					};
+					// A new point or radius starts from the fit-to-radius view.
+					setSettings(
+						next.lat === lat && next.lon === lon && next.radius === radius
+							? next
+							: { ...next, view: HOME },
+					);
 				}}
 			>
 				{FIELDS.map(([name, label, min, max]) => (
@@ -209,7 +264,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 						type="checkbox"
 						checked={settings.onlyAirborne}
 						onChange={(e) =>
-							save({ ...settings, onlyAirborne: e.target.checked })
+							setSettings({ ...settings, onlyAirborne: e.target.checked })
 						}
 					/>
 					Only airborne
@@ -243,8 +298,17 @@ function project(a: Aircraft, s: Settings) {
 	};
 }
 
-// viewBox units as CSS length: the radar SVG scales VIEW to the viewport's short side.
-const vmin = (v: number) => `${(v * 100) / VIEW}vmin`;
+// viewBox units as CSS length: the radar SVG scales VIEW to the viewport's short side, magnified by zoom --k.
+const vmin = (v: number) => `calc(${(v * 100) / VIEW}vmin * var(--k))`;
+
+// Pointer as a screen offset from the viewport center, in viewBox units at k = 1.
+function at(e: { clientX: number; clientY: number }): [number, number] {
+	const unit = Math.min(innerWidth, innerHeight) / VIEW; // px
+	return [
+		(e.clientX - innerWidth / 2) / unit,
+		(e.clientY - innerHeight / 2) / unit,
+	];
+}
 
 // Where the drift animation draws a plane once its fix is seenPos seconds old.
 function drawn(a: Aircraft, s: Settings) {
@@ -306,8 +370,8 @@ function Plane({
 				<svg
 					viewBox="-50 -50 100 100"
 					className="absolute -top-[5vmin] -left-[5vmin] size-[10vmin] overflow-visible"
-					fill="white"
-					stroke="white"
+					fill={a.alt === "ground" ? "#acacac" : "white"}
+					stroke={a.alt === "ground" ? "#acacac" : "white"}
 				>
 					<circle r={5} fill="none" />
 					{a.track != null && (
