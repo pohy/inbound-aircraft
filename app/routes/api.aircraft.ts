@@ -24,12 +24,12 @@ type AdsbLolAircraft = Omit<Aircraft, "type" | "lat" | "lon" | "alt" | "seenPos"
 
 const TTL_MS = 10_000;
 // ponytail: per-process Map keyed by upstream URL; entries self-evict, so no size cap needed
-const cache = new Map<string, Promise<Aircraft[]>>();
+const cache = new Map<string, Promise<{ at: number; aircraft: Aircraft[] }>>(); // at: arrival, epoch ms
 
 function getAircraft(url: string) {
   let p = cache.get(url);
   if (!p) {
-    p = fetchAircraft(url);
+    p = fetchAircraft(url).then((aircraft) => ({ at: Date.now(), aircraft }));
     cache.set(url, p);
     const evict = () => cache.delete(url);
     // Hold successes for TTL after they arrive; drop failures immediately so the next poll retries.
@@ -78,7 +78,10 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   // Errors are returned, not thrown: a thrown fetcher error would replace the page with the ErrorBoundary.
   try {
-    return { aircraft: await getAircraft(`https://api.adsb.lol/v2/point/${lat}/${lon}/${radius}`) };
+    const { at, aircraft } = await getAircraft(`https://api.adsb.lol/v2/point/${lat}/${lon}/${radius}`);
+    // Age fixes by time spent in the cache, or a hit late in the TTL draws planes that far behind and they jump.
+    const age = (Date.now() - at) / 1000;
+    return { aircraft: aircraft.map((a) => ({ ...a, seenPos: (a.seenPos ?? 0) + age })) };
   } catch (e) {
     return data({ error: `adsb.lol: ${e instanceof Error ? e.message : e}` }, { status: 502 });
   }
