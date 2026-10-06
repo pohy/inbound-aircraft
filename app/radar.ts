@@ -30,13 +30,17 @@ export function project(a: Aircraft, s: Settings) {
 // viewBox units as CSS length: the radar SVG scales VIEW to the viewport's short side, magnified by zoom --k.
 export const vmin = (v: number) => `calc(${(v * 100) / VIEW}vmin * var(--k))`;
 
-// Pointer as a screen offset from the viewport center, in viewBox units at k = 1.
+// Radar box size in px: <main>, which fills the screen where innerHeight falls short (see .full-screen in app.css).
+export function screenSize(): [number, number] {
+	const m = document.querySelector("main");
+	return m ? [m.clientWidth, m.clientHeight] : [innerWidth, innerHeight]; // before the first render
+}
+
+// Pointer as a screen offset from the radar box center, in viewBox units at k = 1.
 export function at(e: { clientX: number; clientY: number }): [number, number] {
-	const unit = Math.min(innerWidth, innerHeight) / VIEW; // px
-	return [
-		(e.clientX - innerWidth / 2) / unit,
-		(e.clientY - innerHeight / 2) / unit,
-	];
+	const [w, h] = screenSize();
+	const unit = Math.min(w, h) / VIEW; // px
+	return [(e.clientX - w / 2) / unit, (e.clientY - h / 2) / unit];
 }
 
 // Where the drift animation draws a plane once its fix is seenPos seconds old.
@@ -46,14 +50,14 @@ export function drawn(a: Aircraft, s: Settings) {
 	return [x + vx * t, y + vy * t];
 }
 
-// Point on the screen edge (px, inset 2vmin) toward a plane drawn off screen, or undefined while it's on screen.
+// Point on the screen edge (px, `inset` px in) toward a plane drawn off screen, or undefined while it's on screen.
 // ponytail: uses the fix, not the live drift; a plane crossing the edge between polls, or a window resize,
 // catches up on the next poll, zoom or pan
-export function edge(a: Aircraft, s: Settings, vm: number) {
+export function edge(a: Aircraft, s: Settings, vm: number, inset: number) {
 	const [x, y] = drawn(a, s);
 	const unit = (vm * 100 * s.view.k) / VIEW; // px per viewBox unit
-	const [w, h] = [innerWidth / 2, innerHeight / 2];
-	const p = toEdge((x - s.view.x) * unit, (y - s.view.y) * unit, w, h, 2 * vm);
+	const [w, h] = screenSize().map((v) => v / 2);
+	const p = toEdge((x - s.view.x) * unit, (y - s.view.y) * unit, w, h, inset);
 	return p && [w + p[0], h + p[1]];
 }
 

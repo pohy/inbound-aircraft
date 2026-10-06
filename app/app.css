@@ -44,7 +44,31 @@ body {
   color-scheme: dark;
 }
 
+/* The radar's box, layers sit absolute inside it. An iOS home-screen app with viewport-fit=cover starts the viewport
+   under the status bar but keeps it short by the status bar's height (793 of 852px on a 15 Pro), which left a black
+   bar at the bottom. 100lvh is the full screen there. Not in a browser tab: lvh would run under its toolbars. */
+.full-screen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+@media (display-mode: standalone) {
+  .full-screen {
+    height: 100lvh;
+  }
+}
+
 /* Leaflet sets its own font on the map (attribution); body prefix outranks leaflet.css, which loads later. */
 body .leaflet-container {
   font-family: inherit;
+}
+
+/* Attribution clear of the home bar and, in landscape, the notch (viewport-fit=cover in root.tsx). */
+body .leaflet-bottom {
+  bottom: env(safe-area-inset-bottom);
+}
+body .leaflet-right {
+  right: env(safe-area-inset-right);
 }

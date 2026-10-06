@@ -164,7 +164,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 	const pointers = useRef(new Map<number, [number, number]>());
 
 	return (
-		<main>
+		<main className="full-screen">
 			{/* Centered on the view center, mapped back through the flat projection; zoom k fits radius/k NM. */}
 			{/* ponytail: flat vs Mercator scale differs ~tan(lat)·Δlat away from the user, so zoomed far off center planes
 			    sit up to ~1% of the screen off the map (more at big radii). Project planes through Leaflet if it shows. */}
@@ -178,7 +178,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			/>
 			<svg
 				viewBox={`${view.x - VIEW / 2 / view.k} ${view.y - VIEW / 2 / view.k} ${VIEW / view.k} ${VIEW / view.k}`}
-				className="pointer-events-none fixed inset-0 h-full w-full"
+				className="pointer-events-none absolute inset-0 h-full w-full"
 			>
 				{/* Dims the map outside the radius: a square well past any viewport aspect, with the circle cut out. */}
 				<path
@@ -214,7 +214,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			</svg>
 			{/* Gestures: wheel zooms at the cursor, drag pans, two fingers pinch. Under the planes, so their links take clicks. */}
 			<div
-				className="fixed inset-0 touch-none select-none"
+				className="absolute inset-0 touch-none select-none"
 				onWheel={(e) =>
 					zoom(2 ** ((-e.deltaY * (e.deltaMode ? 33 : 1)) / 200), at(e), [0, 0])
 				}
@@ -234,7 +234,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 				onPointerCancel={(e) => pointers.current.delete(e.pointerId)}
 			/>
 			<div
-				className="pointer-events-none fixed inset-0"
+				className="pointer-events-none absolute inset-0"
 				// --k scales positions and drift (see vmin), not the markers themselves.
 				style={
 					{
@@ -257,7 +257,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			<EdgeMarkers aircraft={visible} polledAt={poll.at} settings={settings} />
 
 			<Conf settings={settings} setSettings={setSettings} />
-			<span className="fixed bottom-2 left-2 text-xs">
+			{/* Narrow screens: above the map attribution, which would overlap it. */}
+			<span className="absolute bottom-[calc(1.5rem+env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] text-xs sm:bottom-[calc(0.5rem+env(safe-area-inset-bottom))]">
 				{visible.length}/{poll.aircraft.length} aircraft · elev{" "}
 				{elevation == null ? "-" : `${Math.round(elevation * elev[1])}${elev[0]}`}
 				{error && <span className="ml-2 text-red-400">{error}</span>}

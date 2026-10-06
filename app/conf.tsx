@@ -26,14 +26,18 @@ export function Conf({
 					max={shown(max, f)}
 					required
 					defaultValue={shown(settings[name], f)}
-					className="w-28 border border-white bg-black px-1 py-0.5 text-sm"
+					// iOS Safari zooms the page on focus below 16px, so touch screens get text-base
+					className="w-28 border border-white bg-black px-1 py-0.5 text-base pointer-fine:text-sm"
 				/>
 			</label>
 		);
 	};
 
 	return (
-		<details className="fixed top-2 left-2 text-xs opacity-50 open:opacity-100">
+		<details
+			// Open: dimmed, blurred backdrop, so labels of planes beneath don't bleed through.
+			className="absolute top-0 left-0 p-2 pt-[max(0.5rem,env(safe-area-inset-top))] pl-[max(0.5rem,env(safe-area-inset-left))] text-xs opacity-50 open:bg-black/75 open:opacity-100 open:backdrop-blur-sm"
+		>
 			<summary className="cursor-pointer list-none text-sm [&::-webkit-details-marker]:hidden">
 				CONF
 			</summary>
@@ -123,7 +127,7 @@ export function Conf({
 				</fieldset>
 			</form>
 			{/* A fieldset outside the form, only to share the legend-in-the-line look. */}
-			<fieldset className="mt-2 border-t border-white/30 mb-4">
+			<fieldset className="mt-2 border-t border-white/30">
 				<legend className="mb-1 pr-2 font-bold tracking-widest uppercase">
 					Info
 				</legend>

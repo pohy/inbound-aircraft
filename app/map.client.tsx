@@ -15,7 +15,8 @@ type Props = {
 export function BaseMap(props: Props) {
 	return (
 		<MapContainer
-			className="fixed! inset-0 bg-black!"
+			// isolate: keeps Leaflet's pane z-indexes (200+) inside the map, or the tiles paint over the radar
+			className="absolute! inset-0 isolate bg-black!"
 			zoomSnap={0}
 			zoomControl={false}
 			dragging={false}
@@ -27,7 +28,8 @@ export function BaseMap(props: Props) {
 		>
 			<TileLayer
 				url="https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png"
-				attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/">Humanitarian OpenStreetMap Team</a> hosted by <a href="https://openstreetmap.fr/">OpenStreetMap France</a>'
+				// Short, so it fits one line on a phone
+				attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · <a href="https://www.hotosm.org/">HOT</a> · <a href="https://openstreetmap.fr/">OSM France</a>'
 				opacity={0.4} // dimmed so the white radar stays readable
 				maxNativeZoom={18}
 				maxZoom={22} // upscale past 18, or Leaflet clamps setView and the map desyncs from the radar when zoomed in

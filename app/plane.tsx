@@ -1,10 +1,19 @@
 import { type CSSProperties, Fragment, useEffect, useState } from "react";
-import { DRIFT_S, drawn, edge, overheadAt, project, vmin } from "./radar";
+import {
+	DRIFT_S,
+	drawn,
+	edge,
+	overheadAt,
+	project,
+	screenSize,
+	vmin,
+} from "./radar";
 import type { Aircraft } from "./routes/api.aircraft";
 import type { Settings } from "./settings";
 import { unit } from "./units";
 
 const FADE_S = 3; // landed planes fade out over this, or the poll interval if shorter
+const FLOOR = 10; // px, smallest 1vmin markers are sized by, so labels stay readable on phones
 
 const tint = (a: Aircraft) => (a.alt === "ground" ? "#acacac" : "white");
 // Flight and type as links to a web search. Must sit inside an SVG <text>.
@@ -75,7 +84,8 @@ export function Plane({
 			>
 				<svg
 					viewBox="-50 -50 100 100"
-					className="absolute -top-[5vmin] -left-[5vmin] size-[10vmin] overflow-visible"
+					// px floor: on a phone 10vmin is ~40px, which made 5px text. Matches FLOOR in EdgeMarkers.
+					className="absolute -top-[max(5vmin,50px)] -left-[max(5vmin,50px)] size-[max(10vmin,100px)] overflow-visible"
 					fill={tint(a)}
 					stroke={tint(a)}
 					opacity={eta == null ? 0.7 : undefined} // not inbound
@@ -120,18 +130,17 @@ export function EdgeMarkers({
 	polledAt: number;
 	settings: Settings;
 }) {
-	const vm = Math.min(innerWidth, innerHeight) / 100; // 1vmin in px
+	const [w, h] = screenSize();
+	const vm = Math.min(w, h) / 100; // 1vmin in px
+	const m = Math.max(vm, FLOOR); // marker scale, floored like the plane's max(10vmin, 100px)
 	return (
-		<svg className="pointer-events-none fixed inset-0 h-full w-full">
+		<svg className="pointer-events-none absolute inset-0 h-full w-full">
 			{aircraft.map((a) => {
-				const p = edge(a, settings, vm);
+				const p = edge(a, settings, vm, 2 * m);
 				if (!p) return null;
-				const right = p[0] > innerWidth / 2; // label points back inward
+				const right = p[0] > w / 2; // label points back inward
 				// The dot sits on the ray from the screen center, so the aircraft lies further along it.
-				const toward = Math.atan2(
-					p[1] - innerHeight / 2,
-					p[0] - innerWidth / 2,
-				);
+				const toward = Math.atan2(p[1] - h / 2, p[0] - w / 2);
 				const eta = overheadAt(a, settings, polledAt);
 				return (
 					<g
@@ -140,22 +149,22 @@ export function EdgeMarkers({
 						fill={tint(a)}
 						opacity={eta == null ? 0.8 : undefined} // not inbound
 					>
-						<circle r={vm * 0.4} />
+						<circle r={m * 0.4} />
 						<line
-							x1={vm * 0.4}
-							x2={vm * 1.6}
+							x1={m * 0.4}
+							x2={m * 1.6}
 							stroke={tint(a)}
 							transform={`rotate(${(toward * 180) / Math.PI})`}
 						/>
 						<text
-							x={right ? -vm : vm}
+							x={right ? -m : m}
 							dy={eta == null ? "0.35em" : "-0.25em"} // centers one or two lines on the dot
-							fontSize={vm * 1.3}
+							fontSize={m * 1.3}
 							textAnchor={right ? "end" : "start"}
 						>
 							<Ident a={a} />
 							{eta != null && (
-								<Eta {...eta} x={right ? -vm : vm} dy="1.2em" />
+								<Eta {...eta} x={right ? -m : m} dy="1.2em" />
 							)}
 						</text>
 					</g>
