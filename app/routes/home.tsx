@@ -136,17 +136,21 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			(before != null && before.alt !== "ground")
 		);
 	});
-	// Tab title counts down to the soonest upcoming overhead pass, so it reads from a background tab.
+	// Tab title counts down to the soonest upcoming overhead pass and names its type, so it reads from a background tab.
 	// ponytail: Chrome slows timers in tabs hidden 5+ min to once a minute; tick from a Worker if that bites
 	useEffect(() => {
-		const etas = visible.flatMap((a) => overheadAt(a, settings, poll.at) ?? []);
+		const etas = visible
+			.flatMap((a) => {
+				const e = overheadAt(a, settings, poll.at);
+				return e ? [{ at: e.at, type: a.type }] : [];
+			})
+			.sort((p, q) => p.at - q.at);
 		const tick = () => {
 			const now = Date.now();
-			const next = Math.min(
-				...etas.filter((e) => e.at > now).map((e) => e.at), // passed ones skip to the next
-			);
-			document.title =
-				next < Infinity ? `[${clock(next, now)}] ${TITLE}` : TITLE;
+			const next = etas.find((e) => e.at > now); // passed ones skip to the next
+			document.title = next
+				? `[${[clock(next.at, now), next.type].filter(Boolean).join(" ")}] ${TITLE}`
+				: TITLE;
 		};
 		tick();
 		const id = setInterval(tick, 1000);
