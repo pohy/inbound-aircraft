@@ -12,6 +12,25 @@ export function Conf({
 }) {
 	const { lat, lon, radius } = settings;
 	const shareUrl = `${location.origin}${location.pathname}?${toQuery(settings)}`;
+	const field = ([name, label, min, max, stored]: (typeof FIELDS)[number]) => {
+		const [u, f] = unit(stored, settings.metric);
+		return (
+			<label key={name} className="flex flex-col gap-1">
+				{u ? `${label} (${u})` : label}
+				<input
+					key={String(settings.metric)} // remounts on a unit switch, so an edited input can't keep the old unit's number
+					name={name}
+					type="number"
+					step="any"
+					min={shown(min, f)}
+					max={shown(max, f)}
+					required
+					defaultValue={shown(settings[name], f)}
+					className="w-28 border border-white bg-black px-1 py-0.5 text-sm"
+				/>
+			</label>
+		);
+	};
 
 	return (
 		<details className="fixed top-2 left-2 text-xs opacity-50 open:opacity-100">
@@ -44,31 +63,36 @@ export function Conf({
 					);
 				}}
 			>
-				<fieldset className="flex flex-wrap items-end gap-2 border-t border-white/30 mb-4">
+				<fieldset className="flex flex-col gap-2 border-t border-white/30 mb-4">
 					<legend className="mb-1 pr-2 font-bold tracking-widest uppercase">
 						Radar
 					</legend>
-					{FIELDS.map(([name, label, min, max, stored]) => {
-						const [u, f] = unit(stored, settings.metric);
-						return (
-							<label key={name} className="flex flex-col gap-1">
-								{u ? `${label} (${u})` : label}
-								<input
-									key={String(settings.metric)} // remounts on a unit switch, so an edited input can't keep the old unit's number
-									name={name}
-									type="number"
-									step="any"
-									min={shown(min, f)}
-									max={shown(max, f)}
-									required
-									defaultValue={shown(settings[name], f)}
-									className="w-28 border border-white bg-black px-1 py-0.5 text-sm"
-								/>
-							</label>
-						);
-					})}
-					<button className="border border-white px-2 py-0.5 text-sm">
-						Apply
+					<div className="flex flex-wrap items-end gap-2">
+						{FIELDS.slice(0, 2).map(field)}
+						{/* Fills lat/lon only; Apply still submits, like a typed edit. */}
+						<button
+							type="button"
+							className="border border-white px-2 py-0.5 text-sm"
+							onClick={(e) => {
+								const form = e.currentTarget.form!;
+								navigator.geolocation.getCurrentPosition(
+									({ coords }) => {
+										// 4 decimals is ~11 m: plenty for a radar, and a share link doesn't pin your door.
+										form.lat.value = coords.latitude.toFixed(4);
+										form.lon.value = coords.longitude.toFixed(4);
+									},
+									(err) => alert(`Geolocation failed: ${err.message}`),
+								);
+							}}
+						>
+							Locate
+						</button>
+					</div>
+					<div className="flex flex-wrap items-end gap-2">
+						{FIELDS.slice(2).map(field)}
+					</div>
+					<button className="self-start border border-white px-2 py-0.5 text-sm">
+						Apply radar options
 					</button>
 				</fieldset>
 				{/* Checkboxes apply instantly, without a refetch. */}
