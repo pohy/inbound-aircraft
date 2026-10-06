@@ -59,7 +59,30 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			fetcher.load(`/api/aircraft?lat=${lat}&lon=${lon}&radius=${radius}`);
 		load();
 		const id = setInterval(load, every * 1000);
-		return () => clearInterval(id);
+		// A hidden tab renders no frames, so planes remounted by a poll then start drifting only on return, from the
+		// poll's time. Restart them aged to now and poll at once (hidden timers may have run only once a minute).
+		const onShow = () => {
+			if (document.hidden) return;
+			const now = Date.now();
+			setPoll((p) => {
+				const aged = p.aircraft.map((a) => ({
+					...a,
+					seenPos: (a.seenPos ?? 0) + (now - p.at) / 1000,
+				}));
+				// prev = self: no settle or turn
+				return {
+					aircraft: aged,
+					at: now,
+					prev: new Map(aged.map((a) => [a.hex, a])),
+				};
+			});
+			load();
+		};
+		document.addEventListener("visibilitychange", onShow);
+		return () => {
+			clearInterval(id);
+			document.removeEventListener("visibilitychange", onShow);
+		};
 	}, [lat, lon, radius, every]);
 
 	// Ground elevation at the chosen point, in ft like aircraft altitudes. Open-Meteo allows CORS, so no proxy.
